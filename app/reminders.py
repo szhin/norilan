@@ -10,7 +10,8 @@ from datetime import date, datetime, timedelta
 from typing import Callable
 
 from app import links
-from app.calendar_logic import format_minutes, relative_label
+from app.calendar_logic import day_month_text, format_minutes, relative_label
+from app.i18n import tr
 from app.models import CalendarItem, Event, Task
 from app.repository import Repository
 from app.settings import Settings
@@ -29,31 +30,38 @@ class Notification:
     url: str      # mở khi bấm vào toast
 
 
-def _remaining(start: datetime, now: datetime) -> str:
-    minutes = max(0, round((start - now).total_seconds() / 60))
-    if minutes == 0:
-        return "ngay bây giờ"
-    # Làm tròn cho dễ đọc ('còn 3 giờ' thay vì 'còn 2 giờ 59 phút').
+def _round_for_display(minutes: int) -> int:
+    """Làm tròn cho dễ đọc ('còn 3 giờ' thay vì 'còn 2 giờ 59 phút')."""
     if minutes >= 1440:
-        minutes = round(minutes / 60) * 60
-    elif minutes >= 120:
-        minutes = round(minutes / 15) * 15
-    elif minutes >= 60:
-        minutes = round(minutes / 5) * 5
-    return f"còn {format_minutes(minutes)}"
+        return round(minutes / 60) * 60
+    if minutes >= 120:
+        return round(minutes / 15) * 15
+    if minutes >= 60:
+        return round(minutes / 5) * 5
+    return minutes
+
+
+def _remaining(start: datetime, now: datetime) -> str:
+    minutes = round((start - now).total_seconds() / 60)
+    if minutes == 0:
+        return tr("remind.now")
+    if minutes < 0:  # app mở lại muộn, sau cả giờ của mục (vẫn trong khoảng grace của due_reminders)
+        return tr("remind.elapsed", span=format_minutes(_round_for_display(-minutes)))
+    return tr("remind.left", span=format_minutes(_round_for_display(minutes)))
 
 
 def item_notification(item: CalendarItem, now: datetime) -> Notification:
     rel = relative_label(item.starts_at.date(), now.date())
-    when_day = rel.lower() if rel else f"{item.starts_at:%d/%m}"
+    when_day = rel.lower() if rel else day_month_text(item.starts_at)
     if isinstance(item, Task):
-        details = [f"Hạn nộp {item.due_at:%H:%M} {when_day} ({_remaining(item.due_at, now)})"]
+        details = [tr("notify.task", time=f"{item.due_at:%H:%M}", day=when_day, remaining=_remaining(item.due_at, now))]
         if item.subject:
             details.append(item.subject)
         title = f"⏰ {item.title}"
     else:
         assert isinstance(item, Event)
-        details = [f"Bắt đầu {item.starts_at:%H:%M} {when_day} ({_remaining(item.starts_at, now)})"]
+        details = [tr("notify.event", time=f"{item.starts_at:%H:%M}", day=when_day,
+                      remaining=_remaining(item.starts_at, now))]
         if item.location:
             details.append(f"📍 {item.location}")
         title = f"📅 {item.title}"
@@ -68,10 +76,10 @@ def item_notification(item: CalendarItem, now: datetime) -> Notification:
 def digest_notification(items: list[CalendarItem], day: date) -> Notification:
     lines = [f"• {item.starts_at:%H:%M} {item.title}" for item in items[:DIGEST_MAX_LINES]]
     if len(items) > DIGEST_MAX_LINES:
-        lines[-1] = f"… và {len(items) - DIGEST_MAX_LINES + 1} việc khác"
+        lines[-1] = tr("notify.digest_more", n=len(items) - DIGEST_MAX_LINES + 1)
     return Notification(
         key=f"digest-{day.isoformat()}",
-        title=f"Ngày mai bạn có {len(items)} việc",
+        title=tr("notify.digest_title", count=len(items)),
         body="\n".join(lines),
         url=links.day_url(day),
     )

@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QLabel, QPushButton, QSizePolicy, QWidget
 
 from app.calendar_logic import chip_state, chip_text
 from app.models import CalendarItem
-from app.ui.theme import repolish
+from app.ui.theme import STATE_OWNS_COLOR, apply_tone, repolish
 
 
 def set_strike(label: QLabel, on: bool) -> None:
@@ -106,10 +106,10 @@ class Chip(ElidedLabel):
     def set_item(self, item: CalendarItem, day: date, now: datetime, tone: str = "blue") -> None:
         self._item_id = item.id
         state = chip_state(item, now)
-        changed = self.property("tone") != tone or self.property("state") != state
-        self.setProperty("tone", tone)
+        state_changed = self.property("state") != state
         self.setProperty("state", state)
-        if changed:
+        apply_tone(self, tone, active=state not in STATE_OWNS_COLOR)
+        if state_changed:
             repolish(self)
         set_strike(self, state == "done")
         self.setFullText(chip_text(item, day))

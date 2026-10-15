@@ -34,6 +34,7 @@ from app.calendar_logic import (
     visible_days,
 )
 from app.colors import ColorResolver, assign_missing_tones
+from app.i18n import tr
 from app.files import (
     AttachmentMissingError,
     FileService,
@@ -69,7 +70,7 @@ def guarded(method: Callable) -> Callable:
             return method(self, *args, **kwargs)
         except Exception:
             log.exception("Lỗi trong %s", method.__name__)
-            prompts.show_error(self, "Đã xảy ra lỗi. Chi tiết đã được ghi vào file log.")
+            prompts.show_error(self, tr("error.generic"))
             return None
 
     return wrapper
@@ -175,14 +176,14 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(16, 10, 16, 10)
         layout.setSpacing(6)
 
-        today_btn = QPushButton("Hôm nay", objectName="ToolButton")
-        today_btn.setToolTip("Về hôm nay (Ctrl+T)")
+        today_btn = QPushButton(tr("toolbar.today"), objectName="ToolButton")
+        today_btn.setToolTip(tr("toolbar.today_tooltip"))
         today_btn.clicked.connect(self.go_today)
         prev_btn = QPushButton("‹", objectName="ToolButton")
-        prev_btn.setToolTip("Kỳ trước (Ctrl+← hoặc PgUp)")
+        prev_btn.setToolTip(tr("toolbar.prev_tooltip"))
         prev_btn.clicked.connect(lambda: self.go(-1))
         next_btn = QPushButton("›", objectName="ToolButton")
-        next_btn.setToolTip("Kỳ sau (Ctrl+→ hoặc PgDown)")
+        next_btn.setToolTip(tr("toolbar.next_tooltip"))
         next_btn.clicked.connect(lambda: self.go(1))
         for btn in (today_btn, prev_btn, next_btn):
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -196,11 +197,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.period_label)
         layout.addStretch(1)
 
-        new_task = QPushButton("+ Bài tập", objectName="PrimaryButton")
-        new_task.setToolTip("Thêm bài tập (Ctrl+N). Mẹo: nhấp đúp vào một ngày trên lịch.")
+        new_task = QPushButton(tr("toolbar.new_task"), objectName="PrimaryButton")
+        new_task.setToolTip(tr("toolbar.new_task_tooltip"))
         new_task.clicked.connect(lambda: self.new_task())
-        new_event = QPushButton("+ Sự kiện")
-        new_event.setToolTip("Thêm sự kiện (Ctrl+Shift+N)")
+        new_event = QPushButton(tr("toolbar.new_event"))
+        new_event.setToolTip(tr("toolbar.new_event_tooltip"))
         new_event.clicked.connect(lambda: self.new_event())
         for btn in (new_task, new_event):
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -208,7 +209,7 @@ class MainWindow(QMainWindow):
         layout.addSpacing(12)
 
         self._view_buttons: dict[ViewMode, QPushButton] = {}
-        group = QButtonGroup(self)
+        group = QButtonGroup(bar)  # thuộc toolbar: bị huỷ cùng toolbar khi dựng lại giao diện
         modes = list(ViewMode)
         seg = QHBoxLayout()
         seg.setSpacing(0)
@@ -216,7 +217,7 @@ class MainWindow(QMainWindow):
             btn = QPushButton(mode.label, objectName="SegButton")
             btn.setCheckable(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setToolTip(f"Xem theo {mode.label.lower()} (Ctrl+{index + 1})")
+            btn.setToolTip(tr("toolbar.view_tooltip", view=mode.label.lower(), n=index + 1))
             btn.setProperty("pos", "first" if index == 0 else "last" if index == len(modes) - 1 else "mid")
             btn.clicked.connect(lambda _=False, m=mode: self.set_view(m))
             group.addButton(btn)
@@ -235,14 +236,15 @@ class MainWindow(QMainWindow):
             ("Ctrl+1", lambda: self.set_view(ViewMode.MONTH)),
             ("Ctrl+2", lambda: self.set_view(ViewMode.WEEK)),
             ("Ctrl+3", lambda: self.set_view(ViewMode.DAY)),
-            ("Esc", self.panel.show_list_page),
+            # panel/sidebar được dựng lại khi đổi ngôn ngữ → luôn gọi qua self, không giữ hàm của widget cũ
+            ("Esc", lambda: self.panel.show_list_page()),
             ("F5", self.refresh),
             ("Ctrl+N", lambda: self.new_task()),
             ("Ctrl+Shift+N", lambda: self.new_event()),
             ("Ctrl+E", lambda: self._on_detail(self.edit_item)),
             ("Delete", lambda: self._on_detail(self.delete_item)),
             ("Ctrl+,", self.settings_requested.emit),
-            ("Ctrl+F", self.sidebar.focus_search),
+            ("Ctrl+F", lambda: self.sidebar.focus_search()),
         ]
         for keys, handler in bindings:
             QShortcut(QKeySequence(keys), self).activated.connect(handler)
@@ -330,7 +332,7 @@ class MainWindow(QMainWindow):
         """Đưa cửa sổ lên và mở đúng mục (bấm vào toast nhắc việc)."""
         self.bring_to_front()
         if self._repo.get_item(item_id) is None:
-            prompts.show_error(self, "Mục này không còn tồn tại (có thể đã bị xoá).")
+            prompts.show_error(self, tr("item.gone"))
             return
         self.open_item(item_id)
 
@@ -381,6 +383,24 @@ class MainWindow(QMainWindow):
         """Áp cài đặt mới (màu, chế độ tô màu…) mà không cần mở lại app."""
         self._settings = settings
         self._refresh_keep_detail()
+
+    def retranslate(self) -> None:
+        """Dựng lại giao diện theo ngôn ngữ vừa đổi, giữ nguyên ngày/chế độ xem, tìm kiếm và mục đang mở.
+
+        Người gọi (AppController) áp lại ảnh nền và logo sau đó – chúng gắn với widget cũ đã bị thay.
+        """
+        detail_id = self.panel.detail_item_id()
+        self._build_ui()
+        self.sidebar.search.blockSignals(True)
+        self.sidebar.search.setText(self._search_text)
+        self.sidebar.search.blockSignals(False)
+        if self._search_status is not None:
+            self.panel.status_filter.blockSignals(True)
+            self.panel.status_filter.setCurrentIndex(self.panel.status_filter.findData(self._search_status))
+            self.panel.status_filter.blockSignals(False)
+        self.refresh()
+        if detail_id is not None and self._repo.get_item(detail_id) is not None:
+            self.open_item(detail_id)
 
     # ------------------------------------------------------------------ Đóng cửa sổ
     def quit_app(self) -> None:
@@ -454,13 +474,13 @@ class MainWindow(QMainWindow):
         item = self._repo.get_item(item_id)
         if item is None:
             return
-        what = "bài tập" if isinstance(item, Task) else "sự kiện"
+        what = "task" if isinstance(item, Task) else "event"
         extra = ""
         if isinstance(item, Task) and item.attachments:
-            extra = "\n\nFile gốc trên máy không bị ảnh hưởng."
+            extra = "\n\n" + tr("delete.extra_originals")
             if any(is_app_copy(a, paths.attachments_dir()) for a in item.attachments):
-                extra += " Các bản sao Norilan lưu cho bài tập này sẽ bị xoá."
-        if prompts.confirm(self, f"Xoá {what}", f"Xoá {what} “{item.title}”? Không thể hoàn tác.{extra}"):
+                extra += " " + tr("delete.extra_copies")
+        if prompts.confirm(self, tr(f"delete.{what}_title"), tr(f"delete.{what}_text", title=item.title, extra=extra)):
             self._repo.delete_item(item_id)
             log.info("Deleted item #%d", item_id)
             self._cleanup_copies()
@@ -489,8 +509,7 @@ class MainWindow(QMainWindow):
     def _copy_files(self, task: Task, copy_files: bool) -> None:
         errors = prepare_attachments(task.attachments, copy_files=copy_files, dest_dir=paths.attachments_dir())
         if errors:
-            prompts.show_error(self, "Không sao chép được một số file, Norilan sẽ dùng đường dẫn gốc.",
-                               "\n".join(errors))
+            prompts.show_error(self, tr("files.copy_failed"), "\n".join(errors))
 
     def _cleanup_copies(self) -> None:
         """Dọn bản sao không còn bài tập nào dùng. Lỗi ở đây không được làm hỏng thao tác chính."""
@@ -523,10 +542,10 @@ class MainWindow(QMainWindow):
         try:
             self._files.reveal(att)
         except AttachmentMissingError:
-            prompts.show_error(self, f"Không tìm thấy “{att.name}” lẫn thư mục chứa nó.", att.target)
+            prompts.show_error(self, tr("attach.missing_both", name=att.name), att.target)
         except OSError as exc:
             log.warning("Reveal failed: %s", exc)
-            prompts.show_error(self, "Không mở được thư mục chứa file.", str(exc))
+            prompts.show_error(self, tr("attach.reveal_failed"), str(exc))
 
     def open_attachment(self, att: Attachment) -> None:
         try:
@@ -536,8 +555,7 @@ class MainWindow(QMainWindow):
         except OSError as exc:
             log.warning("Open failed for %s: %s", att.target, exc)
             prompts.show_error(
-                self, f"Windows không mở được “{att.name}”.",
-                f"{exc}\n\nCó thể máy chưa có ứng dụng cho loại file này. Thử nút 📂 để mở thư mục chứa file.",
+                self, tr("attach.open_failed", name=att.name), tr("attach.open_failed_hint", error=exc),
             )
 
     def _handle_missing(self, att: Attachment) -> None:
@@ -564,18 +582,18 @@ class MainWindow(QMainWindow):
         if item is None:
             return None
         menu = QMenu(self)
-        menu.addAction("Xem chi tiết", lambda: self.open_item(item_id))
+        menu.addAction(tr("menu.details"), lambda: self.open_item(item_id))
         if isinstance(item, Task) and len(item.file_attachments) == 1:
             att = item.file_attachments[0]
-            menu.addAction(f"Mở “{att.name}”", lambda: self.open_attachment(att))
-        menu.addAction("Sửa…", lambda: self.edit_item(item_id))
+            menu.addAction(tr("menu.open_file", name=att.name), lambda: self.open_attachment(att))
+        menu.addAction(tr("menu.edit"), lambda: self.edit_item(item_id))
         if isinstance(item, Task):
             if item.is_done:
-                menu.addAction("Đánh dấu chưa làm", lambda: self.set_status(item_id, TaskStatus.TODO))
+                menu.addAction(tr("menu.mark_todo"), lambda: self.set_status(item_id, TaskStatus.TODO))
             else:
-                menu.addAction("Đánh dấu xong ✓", lambda: self.set_status(item_id, TaskStatus.DONE))
+                menu.addAction(tr("menu.mark_done"), lambda: self.set_status(item_id, TaskStatus.DONE))
         menu.addSeparator()
-        menu.addAction("Xoá", lambda: self.delete_item(item_id))
+        menu.addAction(tr("menu.delete"), lambda: self.delete_item(item_id))
         return menu
 
     @guarded
@@ -631,30 +649,33 @@ class MainWindow(QMainWindow):
         if self._nav == "search":
             text = self._search_text.strip()
             items = self._repo.search(text, status=self._search_status)
+            count = len(items)
             if text:
-                subtitle = f"{len(items)} kết quả cho “{text}”"
+                subtitle = tr("search.results", count=count, text=text)
             else:
-                subtitle = f"{len(items)} bài tập {self._search_status.label.lower()}"  # type: ignore[union-attr]
-            self.panel.show_items("Tìm kiếm", subtitle, items, now=now, today=self._today, group_by_day=True,
-                                  colors=self._colors,
-                                  empty_text="Không tìm thấy gì.\nThử từ khoá khác – không cần gõ dấu.")
+                status = self._search_status.label.lower()  # type: ignore[union-attr]
+                subtitle = tr("search.status_tasks", count=count, status=status)
+            self.panel.show_items(tr("search.title"), subtitle, items, now=now, today=self._today,
+                                  group_by_day=True, colors=self._colors, empty_text=tr("search.empty"))
         elif self._nav == "upcoming":
             items = self._repo.upcoming(now)
-            self.panel.show_items("Sắp tới", f"7 ngày tới · {len(items)} mục chưa xong", items,
+            self.panel.show_items(tr("upcoming.title"), tr("upcoming.subtitle", count=len(items)), items,
                                   now=now, today=self._today, group_by_day=True, colors=self._colors,
-                                  empty_text="Không có việc gì trong 7 ngày tới. 🌿")
+                                  empty_text=tr("upcoming.empty"))
         elif self._nav == "overdue":
             items = self._repo.overdue_tasks(now)
-            self.panel.show_items("Quá hạn", f"{len(items)} việc chưa xong đã quá hạn", items,
+            self.panel.show_items(tr("overdue.title"), tr("overdue.subtitle", count=len(items)), items,
                                   now=now, today=self._today, group_by_day=True, colors=self._colors,
-                                  empty_text="Không có việc nào quá hạn. Tốt lắm! 🎉")
+                                  empty_text=tr("overdue.empty"))
         else:
             items = self._repo.items_on(self._selected)
             rel = relative_label(self._selected, self._today)
-            subtitle = f"{rel} · {len(items)} mục" if rel else f"{len(items)} mục"
+            if rel:
+                subtitle = tr("day.subtitle_rel", rel=rel, count=len(items))
+            else:
+                subtitle = tr("day.subtitle", count=len(items))
             self.panel.show_items(day_heading(self._selected), subtitle, items,
-                                  now=now, today=self._today, colors=self._colors,
-                                  empty_text="Ngày này chưa có việc gì.\nNhấp đúp vào ô ngày hoặc bấm ＋ để thêm.")
+                                  now=now, today=self._today, colors=self._colors, empty_text=tr("day.empty"))
 
     def _on_tick(self) -> None:
         """Qua nửa đêm thì cập nhật 'hôm nay'; luôn cập nhật số đếm (việc có thể vừa quá hạn)."""

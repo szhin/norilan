@@ -9,10 +9,11 @@ from pathlib import Path
 
 from PySide6.QtCore import QStandardPaths
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QColorDialog, QFileDialog, QInputDialog, QMessageBox, QWidget
+from PySide6.QtWidgets import QColorDialog, QDialog, QFileDialog, QInputDialog, QMessageBox, QWidget
 
 from app import APP_NAME
 from app.files import nearest_existing_dir
+from app.i18n import tr
 from app.models import Attachment, AttachmentKind
 
 _last_dir: str | None = None
@@ -30,23 +31,23 @@ def _remember(path: str) -> None:
 
 
 def pick_files(parent: QWidget | None) -> list[str]:
-    paths, _ = QFileDialog.getOpenFileNames(parent, "Chọn file đính kèm", _start_dir())
+    paths, _ = QFileDialog.getOpenFileNames(parent, tr("prompt.pick_files"), _start_dir())
     if paths:
         _remember(paths[0])
     return paths
 
 
 def pick_folder(parent: QWidget | None) -> str | None:
-    path = QFileDialog.getExistingDirectory(parent, "Chọn thư mục đính kèm", _start_dir())
+    path = QFileDialog.getExistingDirectory(parent, tr("prompt.pick_folder"), _start_dir())
     if path:
         _remember(path)
     return path or None
 
 
 def pick_image(parent: QWidget | None) -> str | None:
-    from app.ui.background import IMAGE_FILTER
+    from app.ui.background import image_filter
 
-    path, _ = QFileDialog.getOpenFileName(parent, "Chọn ảnh nền", _start_dir(), IMAGE_FILTER)
+    path, _ = QFileDialog.getOpenFileName(parent, tr("prompt.pick_image"), _start_dir(), image_filter())
     if path:
         _remember(path)
     return path or None
@@ -72,13 +73,21 @@ def show_info(parent: QWidget | None, text: str, details: str = "") -> None:
     box.exec()
 
 
-def pick_color(parent: QWidget | None, start: str) -> str | None:
-    color = QColorDialog.getColor(QColor(start), parent, "Chọn màu nhấn")
+def pick_color(parent: QWidget | None, start: str, title: str | None = None) -> str | None:
+    color = QColorDialog.getColor(QColor(start), parent, title or tr("prompt.pick_accent"))
     return color.name() if color.isValid() else None
 
 
+def pick_gradient(parent: QWidget | None, start: str | None = None) -> str | None:
+    """Hộp thoại tạo màu gradient. Trả về 'gradient:#RRGGBB,#RRGGBB' hoặc None nếu huỷ."""
+    from app.ui.color_picker import GradientDialog  # tránh vòng import
+
+    dialog = GradientDialog(start, parent)
+    return dialog.value() if dialog.exec() == QDialog.DialogCode.Accepted else None
+
+
 def ask_link(parent: QWidget | None) -> str | None:
-    text, ok = QInputDialog.getText(parent, "Thêm link", "Dán đường link (vd. https://lms.truong.edu.vn/...):")
+    text, ok = QInputDialog.getText(parent, tr("prompt.link_title"), tr("prompt.link_label"))
     return text.strip() if ok and text.strip() else None
 
 
@@ -86,11 +95,12 @@ def choose_replacement(parent: QWidget | None, att: Attachment) -> str | None:
     """Chọn lại đường dẫn cho đính kèm bị mất, mở sẵn ở thư mục cha gần nhất còn tồn tại."""
     start = _start_dir(nearest_existing_dir(att.target))
     if att.kind == AttachmentKind.FOLDER:
-        path = QFileDialog.getExistingDirectory(parent, f"Chọn lại thư mục “{att.name}”", start)
+        path = QFileDialog.getExistingDirectory(parent, tr("prompt.relink_folder", name=att.name), start)
     else:
         suffix = Path(att.target).suffix
-        filters = f"Cùng loại (*{suffix});;Tất cả file (*)" if suffix else "Tất cả file (*)"
-        path, _ = QFileDialog.getOpenFileName(parent, f"Chọn lại file “{att.name}”", start, filters)
+        all_files = f"{tr('prompt.all_files')} (*)"
+        filters = f"{tr('prompt.same_type')} (*{suffix});;{all_files}" if suffix else all_files
+        path, _ = QFileDialog.getOpenFileName(parent, tr("prompt.relink_file", name=att.name), start, filters)
     if path:
         _remember(path)
     return path or None
@@ -98,18 +108,15 @@ def choose_replacement(parent: QWidget | None, att: Attachment) -> str | None:
 
 def ask_missing_action(parent: QWidget | None, att: Attachment) -> str:
     """Hỏi khi đính kèm bị mất. Trả về 'relink' | 'remove' | 'cancel'."""
-    what = "thư mục" if att.kind == AttachmentKind.FOLDER else "file"
+    what = "folder" if att.kind == AttachmentKind.FOLDER else "file"
     box = QMessageBox(parent)
     box.setIcon(QMessageBox.Icon.Warning)
-    box.setWindowTitle(f"Không tìm thấy {what}")
-    box.setText(f"Không tìm thấy {what} “{att.name}”.")
-    box.setInformativeText(
-        f"Đường dẫn đã lưu:\n{att.target}\n\nCó thể {what} đã bị di chuyển, đổi tên hoặc xoá. "
-        f"Bạn có muốn chọn lại vị trí mới không?"
-    )
-    relink = box.addButton("Chọn lại đường dẫn…", QMessageBox.ButtonRole.AcceptRole)
-    remove = box.addButton("Gỡ đính kèm", QMessageBox.ButtonRole.DestructiveRole)
-    box.addButton("Huỷ", QMessageBox.ButtonRole.RejectRole)
+    box.setWindowTitle(tr(f"missing.title_{what}"))
+    box.setText(tr(f"missing.text_{what}", name=att.name))
+    box.setInformativeText(tr(f"missing.detail_{what}", target=att.target))
+    relink = box.addButton(tr("missing.relink"), QMessageBox.ButtonRole.AcceptRole)
+    remove = box.addButton(tr("missing.remove"), QMessageBox.ButtonRole.DestructiveRole)
+    box.addButton(tr("common.cancel"), QMessageBox.ButtonRole.RejectRole)
     box.setDefaultButton(relink)
     box.exec()
     clicked = box.clickedButton()
@@ -120,13 +127,13 @@ def ask_missing_action(parent: QWidget | None, att: Attachment) -> str:
     return "cancel"
 
 
-def confirm(parent: QWidget | None, title: str, text: str, *, ok_text: str = "Xoá") -> bool:
+def confirm(parent: QWidget | None, title: str, text: str, *, ok_text: str | None = None) -> bool:
     box = QMessageBox(parent)
     box.setIcon(QMessageBox.Icon.Question)
     box.setWindowTitle(title)
     box.setText(text)
-    ok = box.addButton(ok_text, QMessageBox.ButtonRole.AcceptRole)
-    cancel = box.addButton("Huỷ", QMessageBox.ButtonRole.RejectRole)
+    ok = box.addButton(ok_text or tr("common.delete"), QMessageBox.ButtonRole.AcceptRole)
+    cancel = box.addButton(tr("common.cancel"), QMessageBox.ButtonRole.RejectRole)
     box.setDefaultButton(cancel)
     box.exec()
     return box.clickedButton() is ok

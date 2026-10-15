@@ -1,4 +1,4 @@
-"""Màu sắc (không Qt): bảng màu kiểu Notion, màu tự gán cho môn học, màu nhấn của app."""
+"""Màu sắc (không Qt): bảng màu kiểu Notion, màu gradient, màu tự gán cho môn học, màu nhấn của app."""
 from __future__ import annotations
 
 import re
@@ -7,6 +7,7 @@ from collections import Counter
 from collections.abc import Iterable
 
 from app.db import fold_text
+from app.i18n import tr
 from app.models import CalendarItem, Event, Task
 
 # tone → (nền chip, chữ chip) cho theme sáng / tối – theo bảng màu thẻ của Notion
@@ -33,10 +34,6 @@ DARK_TONES: dict[str, tuple[str, str]] = {
     "red": ("#522e2a", "#f07a75"),
 }
 TONES: tuple[str, ...] = tuple(LIGHT_TONES)
-TONE_LABELS: dict[str, str] = {
-    "gray": "Xám", "brown": "Nâu", "orange": "Cam", "yellow": "Vàng", "green": "Xanh lá",
-    "blue": "Xanh dương", "purple": "Tím", "pink": "Hồng", "red": "Đỏ",
-}
 # Màu tự gán cho môn học: bỏ xám (dành cho 'không có môn') và đỏ (dễ nhầm với 'quá hạn').
 AUTO_TONES: tuple[str, ...] = ("blue", "green", "purple", "orange", "pink", "yellow", "brown")
 
@@ -44,7 +41,6 @@ DEFAULT_TASK_TONE = "blue"
 DEFAULT_EVENT_TONE = "orange"
 NO_SUBJECT_TONE = "gray"
 COLOR_BY = ("subject", "type")
-COLOR_BY_LABELS = {"subject": "Môn học", "type": "Loại mục (bài tập / sự kiện)"}
 
 # Màu nhấn (nút chính, ô hôm nay, viền khi chọn…): key → (màu trên nền sáng, màu trên nền tối)
 ACCENTS: dict[str, tuple[str, str]] = {
@@ -57,17 +53,75 @@ ACCENTS: dict[str, tuple[str, str]] = {
     "brown": ("#8f5f45", "#b98a6f"),
     "gray": ("#5f5e5b", "#9b9a97"),
 }
-ACCENT_LABELS = {k: TONE_LABELS[k] for k in ACCENTS}
 
 _HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+# Màu gradient: 'gradient:#RRGGBB,#RRGGBB' (màu đầu, màu cuối). Dùng được ở mọi chỗ một tone dùng được
+# (màu môn học, màu sự kiện) và lưu chung cột với tên tone. Mẫu giống hệt models._COLOR_RE.
+GRADIENT_PREFIX = "gradient:"
+_GRADIENT_RE = re.compile(r"^gradient:(#[0-9a-fA-F]{6}),(#[0-9a-fA-F]{6})$")
+GRADIENT_PRESETS: tuple[tuple[str, str], ...] = (
+    ("#ff9a5a", "#e0457b"), ("#36d1dc", "#5b86e5"), ("#8e2de2", "#f06292"),
+    ("#56ab2f", "#a8e063"), ("#f6d365", "#fda085"), ("#4568dc", "#b06ab3"),
+)
+
+
+def tone_label(tone: str) -> str:
+    return tr("tone.gradient") if is_gradient(tone) else tr(f"tone.{tone}")
+
+
+def accent_label(accent: str) -> str:
+    return tr(f"tone.{accent}")
+
+
+def color_by_label(key: str) -> str:
+    return tr(f"color_by.{key}")
 
 
 def is_hex(value: str) -> bool:
     return bool(_HEX_RE.match(value))
 
 
+def is_gradient(value: str | None) -> bool:
+    return isinstance(value, str) and bool(_GRADIENT_RE.match(value))
+
+
+def make_gradient(start: str, end: str) -> str:
+    if not (is_hex(start) and is_hex(end)):
+        raise ValueError(f"Màu gradient không hợp lệ: {start!r}, {end!r}")
+    return f"{GRADIENT_PREFIX}{start.lower()},{end.lower()}"
+
+
+def gradient_stops(value: str) -> tuple[str, str]:
+    """(màu đầu, màu cuối) của một chuỗi gradient."""
+    match = _GRADIENT_RE.match(value)
+    if match is None:
+        raise ValueError(f"Không phải màu gradient: {value!r}")
+    return match.group(1).lower(), match.group(2).lower()
+
+
+def _luminance(hex_color: str) -> float:
+    def channel(value: int) -> float:
+        c = value / 255
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (channel(v) for v in _rgb(hex_color))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def readable_text_color(*backgrounds: str) -> str:
+    """Chữ trắng hay chữ tối dễ đọc hơn trên các màu nền này (xét màu nền kém thuận lợi nhất)."""
+    levels = [_luminance(c) for c in backgrounds]
+
+    def worst_contrast(text: str) -> float:
+        lum = _luminance(text)
+        return min((max(lum, other) + 0.05) / (min(lum, other) + 0.05) for other in levels)
+
+    return max(("#ffffff", "#1f1f1f"), key=worst_contrast)
+
+
 def is_valid_tone(value: str | None) -> bool:
-    return value in LIGHT_TONES
+    return value in LIGHT_TONES or is_gradient(value)
 
 
 def auto_tone(subject: str) -> str:

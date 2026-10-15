@@ -9,8 +9,9 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLay
 
 from app.calendar_logic import chip_state, group_label, item_meta
 from app.colors import ColorResolver
+from app.i18n import tr
 from app.models import CalendarItem, Task
-from app.ui.theme import repolish
+from app.ui.theme import STATE_OWNS_COLOR, apply_tone, repolish
 from app.ui.widgets import ElidedLabel, set_strike
 
 
@@ -37,8 +38,8 @@ class ItemCard(QFrame):
 
         bar = QFrame(objectName="KindBar")
         bar.setFixedWidth(3)
-        bar.setProperty("tone", tone)
         bar.setProperty("state", state)
+        apply_tone(bar, tone, vertical=True, active=state not in STATE_OWNS_COLOR)
         layout.addWidget(bar)
 
         column = QVBoxLayout()
@@ -56,7 +57,7 @@ class ItemCard(QFrame):
         if isinstance(item, Task) and item.subject:
             # Môn học hiện như thẻ màu (Notion 'select').
             pill = QLabel(item.subject, objectName="Pill")
-            pill.setProperty("tone", colors.subject_tone(item.subject))
+            apply_tone(pill, colors.subject_tone(item.subject))
             meta_row.addWidget(pill)
         meta_row.addWidget(meta, 1)
         column.addLayout(meta_row)
@@ -98,12 +99,12 @@ class ItemListWidget(QScrollArea):
 
     def set_items(
         self, items: list[CalendarItem], *, now: datetime, today: date,
-        group_by_day: bool = False, empty_text: str = "Không có mục nào.",
+        group_by_day: bool = False, empty_text: str | None = None,
         colors: ColorResolver | None = None,
     ) -> None:
         self._clear()
         if not items:
-            empty = QLabel(empty_text, objectName="EmptyState")
+            empty = QLabel(empty_text or tr("list.empty"), objectName="EmptyState")
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
             empty.setWordWrap(True)
             self._layout.addWidget(empty)

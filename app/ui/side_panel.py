@@ -21,16 +21,18 @@ from PySide6.QtWidgets import (
 from app.calendar_logic import day_heading, format_minutes, time_text
 from app.colors import ColorResolver
 from app.files import is_missing
+from app.i18n import tr
 from app.models import Attachment, AttachmentKind, CalendarItem, Task, TaskStatus
 from app.ui.dialogs import ATTACHMENT_ICON
 from app.ui.item_list import ItemListWidget
-from app.ui.theme import repolish
+from app.ui.theme import apply_tone
 from app.ui.widgets import ElidedButton
 
 
+# khoá trường (nhãn lấy từ bảng dịch 'field.<khoá>') → biểu tượng
 _FIELD_ICONS = {
-    "Hạn nộp": "🗓", "Trạng thái": "◉", "Ưu tiên": "⚑", "Môn học": "🏷", "Nhắc trước": "⏰",
-    "Ghi chú": "≡", "Đính kèm": "📎", "Thời gian": "🕒", "Địa điểm": "📍",
+    "due": "🗓", "status": "◉", "priority": "⚑", "subject": "🏷", "remind": "⏰",
+    "notes": "≡", "attachments": "📎", "time": "🕒", "location": "📍",
 }
 
 
@@ -49,13 +51,13 @@ class AttachmentRow(QFrame):
         layout.setContentsMargins(8, 3, 4, 3)
         layout.setSpacing(4)
 
-        text = f"{ATTACHMENT_ICON[att.kind]}  {att.name}" + ("  — không tìm thấy" if self.missing else "")
+        text = f"{ATTACHMENT_ICON[att.kind]}  {att.name}" + (f"  {tr('attach.missing_suffix')}" if self.missing else "")
         self.open_button = ElidedButton(text)
         self.open_button.setObjectName("AttachmentOpen")
         self.open_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.open_button.setProperty("missing", self.missing)
         self.open_button.setToolTip(
-            f"Không tìm thấy – bấm để chọn lại đường dẫn\n{att.target}" if self.missing else f"Mở\n{att.target}"
+            tr("attach.tooltip_missing" if self.missing else "attach.tooltip_open", target=att.target)
         )
         self.open_button.clicked.connect(lambda: self.open_requested.emit(self.attachment_id))
         layout.addWidget(self.open_button, 1)
@@ -63,7 +65,7 @@ class AttachmentRow(QFrame):
         if att.kind != AttachmentKind.URL:
             reveal = QPushButton("📂", objectName="IconButton")
             reveal.setCursor(Qt.CursorShape.PointingHandCursor)
-            reveal.setToolTip("Mở thư mục chứa file")
+            reveal.setToolTip(tr("attach.reveal_tooltip"))
             reveal.clicked.connect(lambda: self.reveal_requested.emit(self.attachment_id))
             layout.addWidget(reveal)
 
@@ -86,17 +88,17 @@ class DetailView(QWidget):
         outer.setSpacing(8)
 
         top = QHBoxLayout()
-        back = QPushButton("← Quay lại", objectName="LinkButton")
+        back = QPushButton(tr("detail.back"), objectName="LinkButton")
         back.setCursor(Qt.CursorShape.PointingHandCursor)
-        back.setToolTip("Quay lại danh sách (Esc)")
+        back.setToolTip(tr("detail.back_tooltip"))
         back.clicked.connect(self.back_requested)
         top.addWidget(back)
         top.addStretch(1)
-        self.edit_button = QPushButton("✏️ Sửa")
-        self.edit_button.setToolTip("Sửa (Ctrl+E)")
+        self.edit_button = QPushButton(tr("detail.edit"))
+        self.edit_button.setToolTip(tr("detail.edit_tooltip"))
         self.edit_button.clicked.connect(lambda: self.item_id and self.edit_requested.emit(self.item_id))
         self.delete_button = QPushButton("🗑", objectName="DangerButton")
-        self.delete_button.setToolTip("Xoá (Delete)")
+        self.delete_button.setToolTip(tr("detail.delete_tooltip"))
         self.delete_button.clicked.connect(lambda: self.item_id and self.delete_requested.emit(self.item_id))
         top.addWidget(self.edit_button)
         top.addWidget(self.delete_button)
@@ -133,37 +135,36 @@ class DetailView(QWidget):
     def show_item(self, item: CalendarItem, now: datetime, colors: ColorResolver | None = None) -> None:
         colors = colors or ColorResolver()
         self.item_id = item.id
-        self._pill.setProperty("tone", colors.tone(item))
-        self._pill.setText("Bài tập" if isinstance(item, Task) else "Sự kiện")
-        repolish(self._pill)
+        apply_tone(self._pill, colors.tone(item))
+        self._pill.setText(tr("kind.task" if isinstance(item, Task) else "kind.event"))
         self._title.setText(item.title)
         self.attachment_rows = []
         while self._form.rowCount():
             self._form.removeRow(0)
 
         if isinstance(item, Task):
-            self._row("Hạn nộp", f"{item.due_at:%H:%M} · {day_heading(item.due_at.date())}",
+            self._row("due", f"{item.due_at:%H:%M} · {day_heading(item.due_at.date())}",
                       state="overdue" if item.is_overdue(now) else None)
-            self._form.addRow(self._label("Trạng thái"), self._status_box(item))
-            self._row("Ưu tiên", item.priority.label)
+            self._form.addRow(self._label("status"), self._status_box(item))
+            self._row("priority", item.priority.label)
             if item.subject:
                 pill = QLabel(item.subject, objectName="Pill")
-                pill.setProperty("tone", colors.subject_tone(item.subject))
+                apply_tone(pill, colors.subject_tone(item.subject))
                 pill.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-                self._form.addRow(self._label("Môn học"), pill)
+                self._form.addRow(self._label("subject"), pill)
             else:
-                self._row("Môn học", "—")
-            self._row("Nhắc trước", format_minutes(item.remind_before_minutes))
-            self._row("Ghi chú", item.notes or "—")
-            self._form.addRow(self._label("Đính kèm"), self._attachments(item))
+                self._row("subject", "—")
+            self._row("remind", format_minutes(item.remind_before_minutes))
+            self._row("notes", item.notes or "—")
+            self._form.addRow(self._label("attachments"), self._attachments(item))
         else:
-            self._row("Thời gian", f"{time_text(item)} · {day_heading(item.starts_at.date())}")
-            self._row("Địa điểm", item.location or "—")
-            self._row("Nhắc trước", format_minutes(item.remind_before_minutes))
-            self._row("Ghi chú", item.notes or "—")
+            self._row("time", f"{time_text(item)} · {day_heading(item.starts_at.date())}")
+            self._row("location", item.location or "—")
+            self._row("remind", format_minutes(item.remind_before_minutes))
+            self._row("notes", item.notes or "—")
 
     def field_values(self) -> dict[str, str]:
-        """{nhãn: giá trị} của các dòng chữ đang hiển thị (dùng cho test)."""
+        """{nhãn đã dịch: giá trị} của các dòng chữ đang hiển thị (dùng cho test)."""
         values: dict[str, str] = {}
         for row in range(self._form.rowCount()):
             label = self._form.itemAt(row, QFormLayout.ItemRole.LabelRole).widget()
@@ -173,19 +174,20 @@ class DetailView(QWidget):
         return values
 
     # --- dựng từng phần
-    def _label(self, text: str) -> QLabel:
+    def _label(self, key: str) -> QLabel:
         """Nhãn thuộc tính có biểu tượng phía trước, như bảng thuộc tính của Notion."""
-        label = QLabel(f"{_FIELD_ICONS.get(text, '•')}   {text}", objectName="FieldLabel")
+        text = tr(f"field.{key}")
+        label = QLabel(f"{_FIELD_ICONS.get(key, '•')}   {text}", objectName="FieldLabel")
         label.setProperty("field", text)
         return label
 
-    def _row(self, label: str, value: str, *, state: str | None = None) -> None:
+    def _row(self, key: str, value: str, *, state: str | None = None) -> None:
         field = QLabel(value, objectName="FieldValue")
         field.setWordWrap(True)
         field.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         if state:
             field.setProperty("state", state)
-        self._form.addRow(self._label(label), field)
+        self._form.addRow(self._label(key), field)
 
     def _status_box(self, task: Task) -> QWidget:
         box = QComboBox()
@@ -199,7 +201,7 @@ class DetailView(QWidget):
 
     def _attachments(self, task: Task) -> QWidget:
         if not task.attachments:
-            return QLabel("Chưa có đính kèm", objectName="Muted")
+            return QLabel(tr("attach.none"), objectName="Muted")
         box = QWidget()
         layout = QVBoxLayout(box)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -243,9 +245,9 @@ class SidePanel(QFrame):
         self.filter_row = QWidget(objectName="FilterRow")
         fr = QHBoxLayout(self.filter_row)
         fr.setContentsMargins(0, 6, 0, 0)
-        fr.addWidget(QLabel("Trạng thái", objectName="Muted"))
+        fr.addWidget(QLabel(tr("panel.status"), objectName="Muted"))
         self.status_filter = QComboBox()
-        self.status_filter.addItem("Tất cả", None)
+        self.status_filter.addItem(tr("panel.all"), None)
         for status in TaskStatus:
             self.status_filter.addItem(status.label, status)
         self.status_filter.currentIndexChanged.connect(
@@ -267,7 +269,7 @@ class SidePanel(QFrame):
     # --- API
     def show_items(
         self, title: str, subtitle: str, items: list[CalendarItem], *,
-        now: datetime, today: date, group_by_day: bool = False, empty_text: str = "Không có mục nào.",
+        now: datetime, today: date, group_by_day: bool = False, empty_text: str | None = None,
         colors: ColorResolver | None = None,
     ) -> None:
         self._title.setText(title)

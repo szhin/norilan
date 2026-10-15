@@ -75,6 +75,69 @@ def test_item_reminder_sent_once(service, repo):
     assert service.check(now + timedelta(minutes=1)) == []
 
 
+@pytest.mark.parametrize("remind", [15, 2 * 60, 1440])  # phút / giờ / ngày
+def test_item_reminder_fires_exactly_at_start_minus_remind(service, repo, remind):
+    due = datetime(2026, 10, 20, 9)
+    repo.add_task(Task("Lab 3", due, remind_before_minutes=remind))
+    moment = due - timedelta(minutes=remind)
+    assert service.check(moment - timedelta(seconds=1)) == []
+    assert len(service.check(moment)) == 1
+    assert service.check(moment + timedelta(seconds=20)) == []  # lần QTimer kế tiếp: không gửi lặp
+
+
+def test_item_reminder_recomputed_after_rescheduling(service, repo):
+    task = repo.add_task(Task("Lab 3", datetime(2026, 10, 20, 9), remind_before_minutes=30))
+    assert len(service.check(datetime(2026, 10, 20, 8, 30))) == 1
+    task.due_at = datetime(2026, 10, 20, 11)  # dời hạn sau khi đã nhắc → nhắc lại theo giờ mới
+    repo.update_task(task)
+    assert service.check(datetime(2026, 10, 20, 10, 29)) == []
+    notes = service.check(datetime(2026, 10, 20, 10, 30))
+    assert len(notes) == 1 and notes[0].body == "Hạn nộp 11:00 hôm nay (còn 30 phút)"
+    assert service.check(datetime(2026, 10, 20, 10, 31)) == []
+
+
+def test_changing_remind_before_sending_uses_new_moment(service, repo):
+    event = repo.add_event(Event("Họp", datetime(2026, 10, 20, 14), datetime(2026, 10, 20, 15),
+                                 remind_before_minutes=30))
+    event.remind_before_minutes = 120
+    repo.update_event(event)
+    assert service.check(datetime(2026, 10, 20, 11, 59)) == []
+    assert len(service.check(datetime(2026, 10, 20, 12, 0))) == 1
+    assert service.check(datetime(2026, 10, 20, 13, 30)) == []  # mốc cũ không còn tác dụng
+
+
+def test_done_or_deleted_items_never_remind(service, repo):
+    due = datetime(2026, 10, 20, 9)
+    task = repo.add_task(Task("Đã nộp", due, remind_before_minutes=30))
+    repo.set_task_status(task.id, TaskStatus.DONE)
+    gone = repo.add_event(Event("Huỷ", due, due + timedelta(hours=1), remind_before_minutes=30))
+    assert repo.delete_item(gone.id)
+    assert service.check(datetime(2026, 10, 20, 8, 45)) == []
+    repo.set_task_status(task.id, TaskStatus.TODO)  # mở lại task trước hạn → vẫn được nhắc
+    assert [n.url for n in service.check(datetime(2026, 10, 20, 8, 46))] == [f"norilan://item/{task.id}"]
+
+
+def test_app_reopened_after_reminder_moment(repo, settings):
+    due = datetime(2026, 10, 20, 9)
+    pending = repo.add_task(Task("Chưa tới hạn", due, remind_before_minutes=60))
+    started = repo.add_event(Event("Đã bắt đầu", datetime(2026, 10, 20, 8, 10), due, remind_before_minutes=10))
+    repo.add_task(Task("Quá cũ", datetime(2026, 10, 20, 7), remind_before_minutes=10))  # quá grace 1 giờ
+    service = ReminderService(repo, lambda: settings["value"])  # app tắt từ trước 7:00, mở lại 8:40
+    notes = {n.url: n.body for n in service.check(datetime(2026, 10, 20, 8, 40))}
+    assert notes == {
+        f"norilan://item/{pending.id}": "Hạn nộp 09:00 hôm nay (còn 20 phút)",
+        f"norilan://item/{started.id}": "Bắt đầu 08:10 hôm nay (đã qua 30 phút)",
+    }
+    restarted = ReminderService(repo, lambda: settings["value"])
+    assert restarted.check(datetime(2026, 10, 20, 8, 41)) == []
+
+
+def test_notification_text_when_late():
+    task = Task("Lab", datetime(2026, 10, 14, 10), id=1)
+    assert item_notification(task, datetime(2026, 10, 14, 10, 0, 20)).body == "Hạn nộp 10:00 hôm nay (ngay bây giờ)"
+    assert item_notification(task, datetime(2026, 10, 14, 11, 1)).body == "Hạn nộp 10:00 hôm nay (đã qua 1 giờ)"
+
+
 def test_event_notification_text():
     event = Event("Họp nhóm", datetime(2026, 10, 15, 19), datetime(2026, 10, 15, 20), location="Thư viện", id=3)
     note = item_notification(event, datetime(2026, 10, 15, 18, 30))

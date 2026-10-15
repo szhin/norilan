@@ -13,6 +13,7 @@ from pathlib import Path, PurePosixPath
 
 from app import APP_NAME, __version__
 from app.db import SCHEMA_VERSION, migrate, schema_version
+from app.i18n import tr
 
 log = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ FOLDERS = ("attachments", "backgrounds")
 
 
 class BackupError(Exception):
-    """File sao lưu không dùng được – message tiếng Việt để hiện cho người dùng."""
+    """File sao lưu không dùng được – message đã dịch theo ngôn ngữ hiện tại để hiện cho người dùng."""
 
 
 def default_backup_name(now: datetime) -> str:
@@ -93,16 +94,16 @@ def read_manifest(source: Path) -> dict:
         with zipfile.ZipFile(source) as archive:
             names = set(archive.namelist())
             if MANIFEST not in names or DB_NAME not in names:
-                raise BackupError("File này không phải bản sao lưu của Norilan.")
+                raise BackupError(tr("backup.err_not_backup"))
             manifest = json.loads(archive.read(MANIFEST))
     except (zipfile.BadZipFile, OSError) as exc:
-        raise BackupError("Không đọc được file sao lưu (file hỏng hoặc không phải .zip).") from exc
+        raise BackupError(tr("backup.err_unreadable")) from exc
     except ValueError as exc:
-        raise BackupError("Thông tin trong file sao lưu bị hỏng.") from exc
+        raise BackupError(tr("backup.err_bad_info")) from exc
     if not isinstance(manifest, dict) or manifest.get("app") != APP_NAME:
-        raise BackupError("File này không phải bản sao lưu của Norilan.")
+        raise BackupError(tr("backup.err_not_backup"))
     if int(manifest.get("schema_version", 0)) > SCHEMA_VERSION:
-        raise BackupError("Bản sao lưu được tạo bởi phiên bản Norilan mới hơn. Hãy cập nhật Norilan trước.")
+        raise BackupError(tr("backup.err_newer"))
     return manifest
 
 
@@ -144,10 +145,10 @@ def restore_backup(conn: sqlite3.Connection, source: Path, *, data_dir: Path) ->
         restored = sqlite3.connect(tmp_dir / DB_NAME)
         try:
             if restored.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
-                raise BackupError("Database trong bản sao lưu bị hỏng.")
+                raise BackupError(tr("backup.err_bad_db"))
             restored.backup(conn)  # ghi đè database đang dùng
         except sqlite3.DatabaseError as exc:
-            raise BackupError("Database trong bản sao lưu bị hỏng.") from exc
+            raise BackupError(tr("backup.err_bad_db")) from exc
         finally:
             restored.close()
         migrate(conn)  # bản sao lưu cũ hơn → nâng cấp schema

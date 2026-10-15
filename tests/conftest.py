@@ -38,6 +38,16 @@ def isolated_data_dir(tmp_path, monkeypatch):
     monkeypatch.setenv(paths.ENV_DATA_DIR, str(tmp_path / "data"))
 
 
+@pytest.fixture(autouse=True)
+def vietnamese_ui():
+    """Mọi test bắt đầu (và kết thúc) bằng tiếng Việt – test đổi ngôn ngữ không ảnh hưởng test khác."""
+    from app import i18n
+
+    i18n.set_language("vi")
+    yield
+    i18n.set_language("vi")
+
+
 # ------------------------------------------------------------------ Dùng cho test giao diện
 class FakeLauncher:
     """Thay cho os.startfile / Explorer: chỉ ghi lại đã mở gì."""
@@ -72,6 +82,9 @@ class PromptStub:
         self.save_path: str | None = None
         self.open_path: str | None = None
         self.infos: list[str] = []
+        self.color: str | None = None
+        self.gradient: str | None = None
+        self.gradient_starts: list[str | None] = []
 
 
 @pytest.fixture
@@ -95,9 +108,13 @@ def prompts_stub(monkeypatch) -> PromptStub:
 
     stub = PromptStub()
 
-    def confirm(parent, title, text, ok_text="Xoá"):
+    def confirm(parent, title, text, ok_text=None):
         stub.confirms.append(text)
         return stub.confirm_answer
+
+    def pick_gradient(parent, start=None):
+        stub.gradient_starts.append(start)
+        return stub.gradient
 
     monkeypatch.setattr(prompts, "show_error", lambda parent, text, details="": stub.errors.append(text))
     monkeypatch.setattr(prompts, "confirm", confirm)
@@ -110,6 +127,8 @@ def prompts_stub(monkeypatch) -> PromptStub:
     monkeypatch.setattr(prompts, "ask_save_path", lambda parent, title, default, flt: stub.save_path)
     monkeypatch.setattr(prompts, "ask_open_path", lambda parent, title, flt: stub.open_path)
     monkeypatch.setattr(prompts, "show_info", lambda parent, text, details="": stub.infos.append(text))
+    monkeypatch.setattr(prompts, "pick_color", lambda parent, start, title=None: stub.color)
+    monkeypatch.setattr(prompts, "pick_gradient", pick_gradient)
     return stub
 
 

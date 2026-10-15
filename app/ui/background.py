@@ -10,22 +10,28 @@ from PySide6.QtGui import QColor, QImage, QPainter, QPaintEvent, QPixmap
 from PySide6.QtWidgets import QWidget
 
 from app import paths
+from app.i18n import tr
 
 log = logging.getLogger(__name__)
 
 MAX_SIDE = 2560          # ảnh lớn hơn sẽ được thu nhỏ khi nhập (nhẹ RAM, vẽ nhanh)
-IMAGE_FILTER = "Ảnh (*.png *.jpg *.jpeg *.bmp *.webp *.gif)"
+IMAGE_PATTERNS = "*.png *.jpg *.jpeg *.bmp *.webp *.gif"
 
 
 class BackgroundError(ValueError):
     pass
 
 
+def image_filter() -> str:
+    """Bộ lọc cho hộp thoại chọn ảnh, vd. 'Ảnh (*.png *.jpg …)'."""
+    return f"{tr('prompt.images')} ({IMAGE_PATTERNS})"
+
+
 def import_background(source: str | Path) -> str:
     """Chép ảnh vào thư mục backgrounds của app. Trả về tên file mới (lưu trong settings)."""
     image = QImage(str(source))
     if image.isNull():
-        raise BackgroundError("Không đọc được ảnh này (định dạng không hỗ trợ hoặc file bị hỏng).")
+        raise BackgroundError(tr("bg.err_unreadable"))
     if max(image.width(), image.height()) > MAX_SIDE:
         image = image.scaled(MAX_SIDE, MAX_SIDE, Qt.AspectRatioMode.KeepAspectRatio,
                              Qt.TransformationMode.SmoothTransformation)
@@ -33,7 +39,7 @@ def import_background(source: str | Path) -> str:
     name = f"bg-{uuid.uuid4().hex[:10]}.{'png' if has_alpha else 'jpg'}"
     target = paths.backgrounds_dir() / name
     if not image.save(str(target), "PNG" if has_alpha else "JPG", -1 if has_alpha else 90):
-        raise BackgroundError("Không lưu được ảnh nền vào thư mục của Norilan.")
+        raise BackgroundError(tr("bg.err_save"))
     log.info("Imported background %s → %s", source, name)
     return name
 

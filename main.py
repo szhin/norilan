@@ -47,7 +47,7 @@ def main(argv: list[str] | None = None) -> int:
     log.info("%s %s starting %s", APP_NAME, __version__, sys.argv[1:])
     _windows_setup_process()
 
-    from PySide6.QtCore import QLocale, Qt
+    from PySide6.QtCore import Qt
     from PySide6.QtGui import QGuiApplication
     from PySide6.QtWidgets import QApplication
 
@@ -71,8 +71,7 @@ def main(argv: list[str] | None = None) -> int:
     server = InstanceServer()
     server.start()
 
-    QLocale.setDefault(QLocale(QLocale.Language.Vietnamese, QLocale.Country.Vietnam))
-    settings = load_settings(paths.settings_path())
+    settings = load_settings(paths.settings_path())  # ngôn ngữ (cả QLocale) được AppController áp dụng
     conn = connect(paths.db_path())
     repo = Repository(conn)
     if args.seed:

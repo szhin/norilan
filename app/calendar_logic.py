@@ -1,15 +1,14 @@
-"""Logic lịch thuần Python (không Qt): lưới tháng/tuần, nhóm mục theo ngày, nhãn tiếng Việt."""
+"""Logic lịch thuần Python (không Qt): lưới tháng/tuần, nhóm mục theo ngày, nhãn theo ngôn ngữ đang dùng."""
 from __future__ import annotations
 
 import calendar
 from datetime import date, datetime, timedelta
 from enum import StrEnum
 
+from app.i18n import tr, tr_seq
 from app.models import CalendarItem, Event, Priority, Task
 
-WEEKDAY_SHORT = ("T2", "T3", "T4", "T5", "T6", "T7", "CN")
-WEEKDAY_LONG = ("Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật")
-_RELATIVE = {-1: "Hôm qua", 0: "Hôm nay", 1: "Ngày mai"}
+_RELATIVE = {-1: "relative.yesterday", 0: "relative.today", 1: "relative.tomorrow"}
 
 
 class ViewMode(StrEnum):
@@ -19,7 +18,7 @@ class ViewMode(StrEnum):
 
     @property
     def label(self) -> str:
-        return {"month": "Tháng", "week": "Tuần", "day": "Ngày"}[self.value]
+        return tr(f"view.{self.value}")
 
 
 # ------------------------------------------------------------------ Lưới ngày
@@ -62,14 +61,33 @@ def shift(view: ViewMode, selected: date, step: int) -> date:
 
 
 # ------------------------------------------------------------------ Nhãn
+def weekday_short(index: int) -> str:
+    """Tên thứ viết tắt (0 = Thứ Hai): 'T2', 'Mon'…"""
+    return tr_seq("weekday.short")[index]
+
+
+def weekday_long(index: int) -> str:
+    return tr_seq("weekday.long")[index]
+
+
+def date_text(day: date | datetime) -> str:
+    """Ngày đầy đủ theo thứ tự của ngôn ngữ: '14/10/2026' (vi/en/es) hoặc '2026/10/14' (zh/ja)."""
+    return tr("fmt.date", d=day)
+
+
+def day_month_text(day: date | datetime) -> str:
+    return tr("fmt.day_month", d=day)
+
+
 def day_heading(day: date) -> str:
     """'Thứ Tư, 14/10/2026'."""
-    return f"{WEEKDAY_LONG[day.weekday()]}, {day:%d/%m/%Y}"
+    return tr("fmt.day_heading", weekday=weekday_long(day.weekday()), d=day)
 
 
 def relative_label(day: date, today: date) -> str | None:
     """'Hôm qua' / 'Hôm nay' / 'Ngày mai', hoặc None."""
-    return _RELATIVE.get((day - today).days)
+    key = _RELATIVE.get((day - today).days)
+    return tr(key) if key else None
 
 
 def group_label(day: date, today: date) -> str:
@@ -80,25 +98,24 @@ def group_label(day: date, today: date) -> str:
 
 def period_title(view: ViewMode, selected: date) -> str:
     if view == ViewMode.MONTH:
-        return f"Tháng {selected.month}, {selected.year}"
+        return tr("fmt.month_year", month=selected.month, year=selected.year,
+                  month_name=tr_seq("months")[selected.month - 1])
     if view == ViewMode.WEEK:
         first, last = week_dates(selected)[0], week_dates(selected)[-1]
-        if first.year != last.year:
-            return f"{first:%d/%m/%Y} – {last:%d/%m/%Y}"
-        return f"{first:%d/%m} – {last:%d/%m/%Y}"
+        return tr("fmt.week_range_years" if first.year != last.year else "fmt.week_range", first=first, last=last)
     return day_heading(selected)
 
 
 def format_minutes(minutes: int | None) -> str:
     """60 → '1 giờ', 1530 → '1 ngày 1 giờ 30 phút', 0 → 'Đúng giờ', None → 'Không nhắc'."""
     if minutes is None:
-        return "Không nhắc"
+        return tr("remind.none")
     if minutes == 0:
-        return "Đúng giờ"
+        return tr("remind.on_time")
     days, rest = divmod(minutes, 1440)
     hours, mins = divmod(rest, 60)
-    parts = [f"{n} {unit}" for n, unit in ((days, "ngày"), (hours, "giờ"), (mins, "phút")) if n]
-    return " ".join(parts)
+    parts = [tr(key, n=n, count=n) for n, key in ((days, "unit.day"), (hours, "unit.hour"), (mins, "unit.minute")) if n]
+    return tr("fmt.join_units").join(parts)
 
 
 # ------------------------------------------------------------------ Mục trên lịch
@@ -157,11 +174,12 @@ def chip_state(item: CalendarItem, now: datetime) -> str:
 def time_text(item: CalendarItem, *, with_date: bool = False) -> str:
     """'Hạn 23:59' | '19:00 – 20:30' | '23:00 13/10 – 01:00 14/10'."""
     if isinstance(item, Task):
-        return f"Hạn {item.due_at:%H:%M}" + (f" {item.due_at:%d/%m}" if with_date else "")
+        return tr("time.due", time=f"{item.due_at:%H:%M}") + (f" {day_month_text(item.due_at)}" if with_date else "")
     if item.starts_at.date() != item.ends_at.date():
-        return f"{item.starts_at:%H:%M %d/%m} – {item.ends_at:%H:%M %d/%m}"
+        return (f"{item.starts_at:%H:%M} {day_month_text(item.starts_at)} – "
+                f"{item.ends_at:%H:%M} {day_month_text(item.ends_at)}")
     text = f"{item.starts_at:%H:%M} – {item.ends_at:%H:%M}"
-    return text + (f" {item.starts_at:%d/%m}" if with_date else "")
+    return text + (f" {day_month_text(item.starts_at)}" if with_date else "")
 
 
 def item_meta(item: CalendarItem, now: datetime, *, with_date: bool = False, show_subject: bool = True) -> str:
@@ -170,7 +188,7 @@ def item_meta(item: CalendarItem, now: datetime, *, with_date: bool = False, sho
     if isinstance(item, Task):
         if item.subject and show_subject:
             parts.append(item.subject)
-        parts.append("Quá hạn" if item.is_overdue(now) else item.status.label)
+        parts.append(tr("status.overdue") if item.is_overdue(now) else item.status.label)
         if item.attachments:
             parts.append(f"📎{len(item.attachments)}")
     elif item.location:
@@ -179,7 +197,8 @@ def item_meta(item: CalendarItem, now: datetime, *, with_date: bool = False, sho
 
 
 # ------------------------------------------------------------------ Nhắc trước
-REMIND_UNITS: tuple[tuple[str, int], ...] = (("phút", 1), ("giờ", 60), ("ngày", 1440))
+# (khoá trong bảng dịch 'remind.unit.<khoá>', số phút của một đơn vị)
+REMIND_UNITS: tuple[tuple[str, int], ...] = (("minute", 1), ("hour", 60), ("day", 1440))
 
 
 def split_minutes(minutes: int) -> tuple[int, int]:

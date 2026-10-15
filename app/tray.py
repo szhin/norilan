@@ -6,6 +6,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from app import APP_NAME
+from app.i18n import tr
 
 
 class Tray(QObject):
@@ -20,18 +21,29 @@ class Tray(QObject):
         self.icon = QSystemTrayIcon(icon, self)
         self.icon.setToolTip(APP_NAME)
         self.menu = QMenu()
-        open_action = self.menu.addAction(f"Mở {APP_NAME}")
-        font = open_action.font()
+        self._open_action = self.menu.addAction("")
+        font = self._open_action.font()
         font.setBold(True)
-        open_action.setFont(font)
-        open_action.triggered.connect(self.open_requested)
-        self.menu.addAction("＋ Thêm nhanh bài tập…").triggered.connect(self.quick_add_requested)
-        self.menu.addAction("⚙️ Cài đặt…").triggered.connect(self.settings_requested)
+        self._open_action.setFont(font)
+        self._open_action.triggered.connect(self.open_requested)
+        self._quick_add_action = self.menu.addAction("")
+        self._quick_add_action.triggered.connect(self.quick_add_requested)
+        self._settings_action = self.menu.addAction("")
+        self._settings_action.triggered.connect(self.settings_requested)
         self.menu.addSeparator()
-        self.menu.addAction("Thoát").triggered.connect(self.quit_requested)
+        self._quit_action = self.menu.addAction("")
+        self._quit_action.triggered.connect(self.quit_requested)
+        self.retranslate()
         self.icon.setContextMenu(self.menu)
         self.icon.activated.connect(self._on_activated)
         self.icon.messageClicked.connect(self.message_clicked)
+
+    def retranslate(self) -> None:
+        """Đặt lại chữ của menu theo ngôn ngữ hiện tại."""
+        self._open_action.setText(tr("tray.open", app=APP_NAME))
+        self._quick_add_action.setText(tr("tray.quick_add"))
+        self._settings_action.setText(tr("tray.settings"))
+        self._quit_action.setText(tr("tray.quit"))
 
     @staticmethod
     def available() -> bool:

@@ -9,13 +9,17 @@ from datetime import time
 from pathlib import Path
 
 from app.colors import ACCENTS, COLOR_BY, is_hex
+from app.i18n import DEFAULT_LANGUAGE, LANGUAGES, tr
 
 log = logging.getLogger(__name__)
 
 THEMES = ("light", "dark", "system")
-THEME_LABELS = {"light": "Sáng", "dark": "Tối", "system": "Theo Windows"}
 VIEWS = ("month", "week", "day")
 AUTO_DELETE_CHOICES = (0, 7, 14, 30, 90)   # 0 = tắt
+
+
+def theme_label(theme: str) -> str:
+    return tr(f"theme.{theme}")
 
 
 @dataclass(slots=True)
@@ -23,6 +27,7 @@ class Settings:
     daily_digest_enabled: bool = True
     daily_digest_time: str = "20:00"  # HH:MM, giờ gửi toast "Ngày mai bạn có N việc"
     theme: str = "light"
+    language: str = DEFAULT_LANGUAGE  # một trong i18n.LANGUAGES
     accent: str = "blue"              # key trong colors.ACCENTS hoặc mã #RRGGBB
     color_by: str = "subject"         # tô màu lịch theo 'subject' (môn học) hoặc 'type' (loại mục)
     default_view: str = "month"
@@ -46,6 +51,8 @@ class Settings:
             raise ValueError(f"Giờ nhắc không hợp lệ: {self.daily_digest_time!r}") from exc
         if self.theme not in THEMES:
             raise ValueError(f"Theme không hợp lệ: {self.theme!r}")
+        if self.language not in LANGUAGES:
+            raise ValueError(f"Ngôn ngữ không hợp lệ: {self.language!r}")
         if self.default_view not in VIEWS:
             raise ValueError(f"Chế độ xem không hợp lệ: {self.default_view!r}")
         if self.accent not in ACCENTS and not is_hex(self.accent):

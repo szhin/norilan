@@ -6,14 +6,16 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QButtonGroup, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
 
 from app import APP_NAME, __version__
+from app.i18n import tr
 from app.ui.theme import repolish
 
-NAV_ITEMS: tuple[tuple[str, str, str], ...] = (
-    ("calendar", "📅", "Lịch"),
-    ("today", "☀️", "Hôm nay"),
-    ("tomorrow", "🌤️", "Ngày mai"),
-    ("upcoming", "🗓️", "Sắp tới (7 ngày)"),
-    ("overdue", "⏰", "Quá hạn"),
+# (khoá điều hướng, biểu tượng); chữ hiển thị lấy từ bảng dịch 'nav.<khoá>'
+NAV_ITEMS: tuple[tuple[str, str], ...] = (
+    ("calendar", "📅"),
+    ("today", "☀️"),
+    ("tomorrow", "🌤️"),
+    ("upcoming", "🗓️"),
+    ("overdue", "⏰"),
 )
 
 
@@ -73,8 +75,8 @@ class Sidebar(QFrame):
         layout.addLayout(header)
 
         self.search = QLineEdit(objectName="SearchBox")
-        self.search.setPlaceholderText("🔍  Tìm kiếm…")
-        self.search.setToolTip("Tìm theo tiêu đề, ghi chú, môn học, địa điểm – không cần gõ dấu (Ctrl+F)")
+        self.search.setPlaceholderText(tr("sidebar.search_placeholder"))
+        self.search.setToolTip(tr("sidebar.search_tooltip"))
         self.search.setClearButtonEnabled(True)
         self.search.setFocusPolicy(Qt.FocusPolicy.ClickFocus)  # không tự nhận con trỏ khi mở app (Ctrl+F vẫn được)
         self.search.textChanged.connect(self.search_changed)
@@ -84,27 +86,27 @@ class Sidebar(QFrame):
         layout.addWidget(self.search)
         layout.addSpacing(4)
 
-        new_task = QPushButton("＋  Bài tập mới", objectName="SidebarAction")
+        new_task = QPushButton(tr("sidebar.new_task"), objectName="SidebarAction")
         new_task.setCursor(Qt.CursorShape.PointingHandCursor)
-        new_task.setToolTip("Thêm bài tập (Ctrl+N)")
+        new_task.setToolTip(tr("sidebar.new_task_tooltip"))
         new_task.clicked.connect(self.new_task_requested)
         layout.addWidget(new_task)
-        layout.addWidget(QLabel("XEM NHANH", objectName="SidebarSection"))
+        layout.addWidget(QLabel(tr("sidebar.section"), objectName="SidebarSection"))
 
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
         self.buttons: dict[str, NavButton] = {}
-        for key, icon, text in NAV_ITEMS:
-            button = NavButton(icon, text)
+        for key, icon in NAV_ITEMS:
+            button = NavButton(icon, tr(f"nav.{key}"))
             button.clicked.connect(lambda _=False, k=key: self.nav_changed.emit(k))
             self._group.addButton(button)
             layout.addWidget(button)
             self.buttons[key] = button
 
         layout.addStretch(1)
-        settings = QPushButton("⚙️  Cài đặt", objectName="SidebarAction")
+        settings = QPushButton(tr("sidebar.settings"), objectName="SidebarAction")
         settings.setCursor(Qt.CursorShape.PointingHandCursor)
-        settings.setToolTip("Cài đặt (Ctrl+,)")
+        settings.setToolTip(tr("sidebar.settings_tooltip"))
         settings.clicked.connect(self.settings_requested)
         layout.addWidget(settings)
         layout.addWidget(QLabel(f"{APP_NAME} {__version__}", objectName="SidebarFooter"))

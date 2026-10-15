@@ -30,6 +30,7 @@ from app.calendar_logic import REMIND_UNITS, split_minutes
 from app.colors import DEFAULT_EVENT_TONE, ColorResolver, pick_tone
 from app import paths
 from app.files import AttachmentMissingError, FileService, attachment_from_target, is_app_copy, is_missing
+from app.i18n import tr
 from app.models import (
     Attachment,
     AttachmentKind,
@@ -57,7 +58,7 @@ class DateTimeRow(QWidget):
         layout.setSpacing(6)
         self.date_edit = QDateEdit()
         self.date_edit.setCalendarPopup(True)
-        self.date_edit.setDisplayFormat("dd/MM/yyyy")
+        self.date_edit.setDisplayFormat(tr("dialog.date_format"))
         self.time_edit = QTimeEdit()
         self.time_edit.setDisplayFormat("HH:mm")
         self.time_edit.setMinimumWidth(84)
@@ -84,14 +85,14 @@ class ReminderEdit(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
-        self.enabled = QCheckBox("Nhắc trước")
+        self.enabled = QCheckBox(tr("reminder.enable"))
         self.amount = QSpinBox()
         self.amount.setMinimumWidth(72)
         self.amount.setRange(0, 999)
         self.amount.setValue(30)
         self.unit = QComboBox()
-        for label, minutes in REMIND_UNITS:
-            self.unit.addItem(label, minutes)
+        for key, minutes in REMIND_UNITS:
+            self.unit.addItem(tr(f"remind.unit.{key}"), minutes)
         layout.addWidget(self.enabled)
         layout.addWidget(self.amount)
         layout.addWidget(self.unit)
@@ -133,8 +134,8 @@ class AttachmentEditor(QWidget):
 
         add_row = QHBoxLayout()
         add_row.setSpacing(6)
-        for text, handler in (("📄 Thêm file…", self._add_files), ("📁 Thêm thư mục…", self._add_folder),
-                              ("🔗 Thêm link…", self._add_link)):
+        for text, handler in ((tr("attach.add_file"), self._add_files), (tr("attach.add_folder"), self._add_folder),
+                              (tr("attach.add_link"), self._add_link)):
             button = QPushButton(text)
             button.clicked.connect(handler)
             add_row.addWidget(button)
@@ -147,16 +148,16 @@ class AttachmentEditor(QWidget):
         self.list.currentRowChanged.connect(lambda _: self._sync_buttons())
         layout.addWidget(self.list)
 
-        hint = QLabel("Mẹo: kéo-thả file, thư mục hoặc link vào cửa sổ này. Nhấp đúp để mở.", objectName="DropHint")
+        hint = QLabel(tr("attach.hint"), objectName="DropHint")
         layout.addWidget(hint)
 
         action_row = QHBoxLayout()
         action_row.setSpacing(6)
-        self._open_btn = QPushButton("Mở")
+        self._open_btn = QPushButton(tr("common.open"))
         self._open_btn.clicked.connect(self.open_selected)
-        self._relink_btn = QPushButton("Đổi đường dẫn…")
+        self._relink_btn = QPushButton(tr("attach.relink"))
         self._relink_btn.clicked.connect(self.relink_selected)
-        self._remove_btn = QPushButton("Gỡ khỏi bài tập")
+        self._remove_btn = QPushButton(tr("attach.remove"))
         self._remove_btn.setObjectName("DangerButton")
         self._remove_btn.clicked.connect(self.remove_selected)
         action_row.addWidget(self._open_btn)
@@ -221,7 +222,7 @@ class AttachmentEditor(QWidget):
             if prompts.ask_missing_action(self, att) == "relink":
                 self.relink_selected()
         except OSError as exc:
-            prompts.show_error(self, "Windows không mở được đính kèm này.", str(exc))
+            prompts.show_error(self, tr("attach.open_error"), str(exc))
 
     def relink_selected(self) -> None:
         row = self.list.currentRow()
@@ -249,7 +250,7 @@ class AttachmentEditor(QWidget):
             missing = is_missing(att)
             text = f"{ATTACHMENT_ICON[att.kind]}  {att.name}"
             if missing:
-                text += "   — không tìm thấy"
+                text += f"   {tr('attach.missing_suffix')}"
             item = QListWidgetItem(text)
             item.setToolTip(att.target)
             if missing:
@@ -292,11 +293,11 @@ class _ItemDialog(QDialog):
 
         buttons = QHBoxLayout()
         buttons.addStretch(1)
-        cancel = QPushButton("Huỷ")
+        cancel = QPushButton(tr("common.cancel"))
         cancel.clicked.connect(self.reject)
         self.save_button = QPushButton(save_text, objectName="PrimaryButton")
         self.save_button.setDefault(True)
-        self.save_button.setToolTip("Lưu (Ctrl+Enter)")
+        self.save_button.setToolTip(tr("dialog.save_tooltip"))
         self.save_button.clicked.connect(self.accept)
         buttons.addWidget(cancel)
         buttons.addWidget(self.save_button)
@@ -334,7 +335,7 @@ class TaskDialog(_ItemDialog):
         default_due: datetime | None = None, copy_default: bool = False,
         subject_colors: dict[str, str] | None = None, parent: QWidget | None = None,
     ) -> None:
-        super().__init__("Sửa bài tập" if task else "Bài tập mới", parent)
+        super().__init__(tr("task.window_edit" if task else "task.window_new"), parent)
         self._original = task
         self._subject_colors = dict(subject_colors or {})
         self._colors = ColorResolver("subject", self._subject_colors)
@@ -342,10 +343,10 @@ class TaskDialog(_ItemDialog):
         self._picked_tones: dict[str, str] = {}  # môn → màu người dùng vừa chọn trong dialog này
         self.setAcceptDrops(True)
         self.resize(600, 680)
-        self.title_edit.setPlaceholderText("Tên bài tập, vd. Lab 2 – Hàm trong Matlab")
+        self.title_edit.setPlaceholderText(tr("task.placeholder"))
 
         self.due = DateTimeRow()
-        self.form.addRow("Hạn nộp", self.due)
+        self.form.addRow(tr("task.due"), self.due)
 
         status_priority = QHBoxLayout()
         self.status = QComboBox()
@@ -356,47 +357,43 @@ class TaskDialog(_ItemDialog):
             self.priority.addItem(priority.label, priority)
         status_priority.addWidget(self.status, 1)
         status_priority.addSpacing(14)
-        status_priority.addWidget(QLabel("Ưu tiên"))
+        status_priority.addWidget(QLabel(tr("task.priority")))
         status_priority.addWidget(self.priority, 1)
-        self.form.addRow("Trạng thái", status_priority)
+        self.form.addRow(tr("task.status"), status_priority)
 
         self.subject = QComboBox()
         self.subject.setEditable(True)
         self.subject.addItems(subjects)
         self.subject.setCurrentText("")
-        self.subject.lineEdit().setPlaceholderText("Môn học / tag, vd. Phương pháp tính")
+        self.subject.lineEdit().setPlaceholderText(tr("task.subject_placeholder"))
         self.subject_tone = ToneButton()
-        self.subject_tone.setToolTip("Màu của môn học này trên lịch (áp dụng cho mọi bài tập cùng môn)")
+        self.subject_tone.setToolTip(tr("task.subject_color_tooltip"))
         self.subject_tone.tone_changed.connect(self._on_tone_picked)
         self.subject.currentTextChanged.connect(self._sync_subject_tone)
         subject_row = QHBoxLayout()
         subject_row.setSpacing(6)
         subject_row.addWidget(self.subject, 1)
         subject_row.addWidget(self.subject_tone)
-        self.form.addRow("Môn học", subject_row)
+        self.form.addRow(tr("task.subject"), subject_row)
 
         self.reminder = ReminderEdit()
-        self.form.addRow("Nhắc việc", self.reminder)
+        self.form.addRow(tr("task.remind"), self.reminder)
 
         self.notes = QPlainTextEdit()
-        self.notes.setPlaceholderText("Ghi chú, yêu cầu đề bài…")
+        self.notes.setPlaceholderText(tr("task.notes_placeholder"))
         self.notes.setFixedHeight(80)
-        self.form.addRow("Ghi chú", self.notes)
+        self.form.addRow(tr("task.notes"), self.notes)
 
-        self._root.addWidget(QLabel("ĐÍNH KÈM", objectName="SectionLabel"))
+        self._root.addWidget(QLabel(tr("task.attachments"), objectName="SectionLabel"))
         self.attachments = AttachmentEditor(files)
         self._root.addWidget(self.attachments, 1)
-        self.copy_files = QCheckBox("Lưu bản sao file vào Norilan – vẫn mở được khi file gốc bị xoá hoặc di chuyển")
-        self.copy_files.setToolTip(
-            "Khi lưu, mọi file đính kèm được chép vào thư mục riêng của Norilan và bài tập sẽ mở bản sao đó.\n"
-            "Lưu ý: sửa bản sao không làm thay đổi file gốc (và ngược lại).\n"
-            "Thư mục và link web không được sao chép."
-        )
+        self.copy_files = QCheckBox(tr("task.copy_files"))
+        self.copy_files.setToolTip(tr("task.copy_tooltip"))
         self.copy_files.setChecked(copy_default)
         self._root.addWidget(self.copy_files)
         self.priority.setCurrentIndex(self.priority.findData(Priority.NORMAL))
 
-        self._finish("Lưu bài tập" if task else "Tạo bài tập")
+        self._finish(tr("task.save_edit" if task else "task.save_new"))
         if task is not None:
             self._load(task)
         else:
@@ -477,30 +474,30 @@ class EventDialog(_ItemDialog):
         self, *, event: Event | None = None, default_start: datetime | None = None,
         parent: QWidget | None = None,
     ) -> None:
-        super().__init__("Sửa sự kiện" if event else "Sự kiện mới", parent)
+        super().__init__(tr("event.window_edit" if event else "event.window_new"), parent)
         self._original = event
-        self.title_edit.setPlaceholderText("Tên sự kiện, vd. Họp nhóm đồ án")
+        self.title_edit.setPlaceholderText(tr("event.placeholder"))
         self._duration = timedelta(hours=1)
 
         self.start = DateTimeRow()
         self.end = DateTimeRow()
-        self.form.addRow("Bắt đầu", self.start)
-        self.form.addRow("Kết thúc", self.end)
+        self.form.addRow(tr("event.start"), self.start)
+        self.form.addRow(tr("event.end"), self.end)
         self.location = QLineEdit()
-        self.location.setPlaceholderText("Phòng học, địa chỉ hoặc link họp online")
-        self.form.addRow("Địa điểm", self.location)
+        self.location.setPlaceholderText(tr("event.location_placeholder"))
+        self.form.addRow(tr("event.location"), self.location)
         self.color = ToneButton(DEFAULT_EVENT_TONE)
         color_row = QHBoxLayout()
         color_row.addWidget(self.color)
         color_row.addStretch(1)
-        self.form.addRow("Màu", color_row)
+        self.form.addRow(tr("event.color"), color_row)
         self.reminder = ReminderEdit()
-        self.form.addRow("Nhắc việc", self.reminder)
+        self.form.addRow(tr("task.remind"), self.reminder)
         self.notes = QPlainTextEdit()
-        self.notes.setPlaceholderText("Ghi chú…")
+        self.notes.setPlaceholderText(tr("event.notes_placeholder"))
         self.notes.setFixedHeight(90)
-        self.form.addRow("Ghi chú", self.notes)
-        self._finish("Lưu sự kiện" if event else "Tạo sự kiện")
+        self.form.addRow(tr("event.notes"), self.notes)
+        self._finish(tr("event.save_edit" if event else "event.save_new"))
         self.resize(520, self.sizeHint().height())
 
         if event is not None:

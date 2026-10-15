@@ -7,9 +7,11 @@ from datetime import datetime
 from enum import IntEnum, StrEnum
 from typing import ClassVar
 
+from app.i18n import tr
+
 
 class ValidationError(ValueError):
-    """Dữ liệu không hợp lệ; message bằng tiếng Việt để UI hiển thị trực tiếp."""
+    """Dữ liệu không hợp lệ; message đã dịch theo ngôn ngữ hiện tại để UI hiển thị trực tiếp."""
 
 
 class TaskStatus(StrEnum):
@@ -19,14 +21,7 @@ class TaskStatus(StrEnum):
 
     @property
     def label(self) -> str:
-        return _STATUS_LABELS[self]
-
-
-_STATUS_LABELS = {
-    TaskStatus.TODO: "Chưa làm",
-    TaskStatus.IN_PROGRESS: "Đang làm",
-    TaskStatus.DONE: "Xong",
-}
+        return tr(f"status.{self.value}")
 
 
 class Priority(IntEnum):
@@ -36,10 +31,7 @@ class Priority(IntEnum):
 
     @property
     def label(self) -> str:
-        return _PRIORITY_LABELS[self]
-
-
-_PRIORITY_LABELS = {Priority.LOW: "Thấp", Priority.NORMAL: "Trung bình", Priority.HIGH: "Cao"}
+        return tr(f"priority.{self.name.lower()}")
 
 
 class AttachmentKind(StrEnum):
@@ -48,17 +40,18 @@ class AttachmentKind(StrEnum):
     URL = "url"
 
 
-_COLOR_RE = re.compile(r"^(?:[a-z]+|#[0-9a-fA-F]{6})$")
+# Tên tone, '#RRGGBB' hoặc gradient (cùng định dạng với colors.GRADIENT_PREFIX – colors import models nên không dùng chung được)
+_COLOR_RE = re.compile(r"^(?:[a-z]+|#[0-9a-fA-F]{6}|gradient:#[0-9a-fA-F]{6},#[0-9a-fA-F]{6})$")
 
 
 def _check_remind(minutes: int | None) -> None:
     if minutes is not None and minutes < 0:
-        raise ValidationError("Thời gian nhắc trước phải ≥ 0 phút")
+        raise ValidationError(tr("error.remind_negative"))
 
 
 def _check_color(color: str | None) -> None:
     if color is not None and not _COLOR_RE.match(color):
-        raise ValidationError(f"Màu không hợp lệ: {color!r}")
+        raise ValidationError(tr("error.color_invalid", color=repr(color)))
 
 
 @dataclass(slots=True)
@@ -85,11 +78,11 @@ class Attachment:
 
     def validate(self) -> None:
         if not self.target or not self.target.strip():
-            raise ValidationError("Đường dẫn đính kèm không được để trống")
+            raise ValidationError(tr("error.attachment_empty"))
         try:
             AttachmentKind(self.kind)
         except ValueError as exc:
-            raise ValidationError(f"Loại đính kèm không hợp lệ: {self.kind!r}") from exc
+            raise ValidationError(tr("error.attachment_kind", kind=repr(self.kind))) from exc
 
 
 @dataclass(slots=True)
@@ -130,7 +123,7 @@ class Task:
 
     def validate(self) -> None:
         if not self.title or not self.title.strip():
-            raise ValidationError("Tiêu đề không được để trống")
+            raise ValidationError(tr("error.title_empty"))
         try:
             TaskStatus(self.status)
             Priority(self.priority)
@@ -161,9 +154,9 @@ class Event:
 
     def validate(self) -> None:
         if not self.title or not self.title.strip():
-            raise ValidationError("Tiêu đề không được để trống")
+            raise ValidationError(tr("error.title_empty"))
         if self.ends_at < self.starts_at:
-            raise ValidationError("Giờ kết thúc phải sau giờ bắt đầu")
+            raise ValidationError(tr("error.end_before_start"))
         _check_remind(self.remind_before_minutes)
         _check_color(self.color)
 

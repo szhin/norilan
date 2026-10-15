@@ -8,14 +8,15 @@ from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from app.calendar_logic import (
-    WEEKDAY_SHORT,
     day_heading,
     month_grid,
     relative_label,
     split_overflow,
     week_dates,
+    weekday_short,
 )
 from app.colors import ColorResolver
+from app.i18n import tr
 from app.models import CalendarItem
 from app.ui.item_list import ItemListWidget
 from app.ui.theme import repolish
@@ -67,7 +68,7 @@ class DayCell(QFrame):
         # Nút '+' chỉ hiện khi rê chuột vào ô (giống lịch Notion) – thêm bài tập vào ngày này.
         self._add = QPushButton("+", objectName="CellAdd")
         self._add.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._add.setToolTip("Thêm bài tập vào ngày này")
+        self._add.setToolTip(tr("cell.add_tooltip"))
         self._add.clicked.connect(lambda: self._day and self.day_double_clicked.emit(self._day))
         self._add.hide()
         head.addWidget(self._add)
@@ -96,7 +97,7 @@ class DayCell(QFrame):
         self._day = day
         self._number.setText(str(day.day))
         if self._weekday is not None:
-            self._weekday.setText(WEEKDAY_SHORT[day.weekday()])
+            self._weekday.setText(weekday_short(day.weekday()))
             if _set_prop(self._weekday, "today", today):
                 repolish(self._weekday)
 
@@ -113,7 +114,7 @@ class DayCell(QFrame):
                 chip.show()
             else:
                 chip.hide()
-        self._more.setText(f"+{hidden} mục khác")
+        self._more.setText(tr("cell.more", count=hidden))
         self._more.setVisible(hidden > 0)
 
         if _set_prop(self, "outside", outside) | _set_prop(self, "selected", selected):
@@ -189,8 +190,8 @@ class _GridView(QWidget):
 class MonthView(_GridView):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        for col, name in enumerate(WEEKDAY_SHORT):
-            header = QLabel(name, objectName="WeekdayHeader")
+        for col in range(7):
+            header = QLabel(weekday_short(col), objectName="WeekdayHeader")
             self._grid.addWidget(header, 0, col)
             self._grid.setColumnStretch(col, 1)
         for row in range(6):
@@ -256,7 +257,7 @@ class DayView(QWidget):
         rel = relative_label(selected, today)
         self._heading.setText(f"{rel} · {day_heading(selected)}" if rel else day_heading(selected))
         self._list.set_items(grouped.get(selected, []), now=now, today=today, colors=colors,
-                             empty_text="Ngày này chưa có việc gì. Bấm “+ Bài tập” để thêm.")
+                             empty_text=tr("dayview.empty", button=tr("toolbar.new_task")))
 
     def set_selected_item(self, item_id: int | None) -> None:
         self._list.set_selected(item_id)

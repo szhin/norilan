@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Callable
 
-from PySide6.QtCore import QTime, QTimer, Qt, Signal
+from PySide6.QtCore import QSize, QTime, QTimer, Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -25,11 +25,13 @@ from PySide6.QtWidgets import (
 
 from app import APP_NAME
 from app.calendar_logic import ViewMode
-from app.colors import COLOR_BY, COLOR_BY_LABELS, ColorResolver
-from app.settings import AUTO_DELETE_CHOICES, THEME_LABELS, THEMES, Settings
+from app.colors import COLOR_BY, ColorResolver, color_by_label
+from app.i18n import LANGUAGE_NAMES, LANGUAGES, tr
+from app.settings import AUTO_DELETE_CHOICES, THEMES, Settings, theme_label
 from app.ui import prompts
 from app.ui.background import BackgroundError, import_background, load_background
 from app.ui.color_picker import AccentPicker, ToneButton
+from app.ui.language import flag_icon
 from app.ui.widgets import ElidedLabel
 
 
@@ -67,7 +69,7 @@ class SettingsDialog(QDialog):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle(f"Cài đặt – {APP_NAME}")
+        self.setWindowTitle(f"{tr('settings.title')} – {APP_NAME}")
         self.resize(580, 720)
         self._original = settings
         self._background = settings.background
@@ -91,60 +93,67 @@ class SettingsDialog(QDialog):
         root.setContentsMargins(24, 16, 24, 8)
         root.setSpacing(10)
 
-        title = QLabel("Cài đặt", objectName="DetailTitle")
+        title = QLabel(tr("settings.title"), objectName="DetailTitle")
         root.addWidget(title)
 
         # ---- Giao diện
-        root.addWidget(_section("Giao diện", "Chủ đề và màu nhấn đổi ngay để bạn xem trước."))
+        root.addWidget(_section(tr("settings.appearance"), tr("settings.appearance_hint")))
         form = self._form(root)
+        # Ngôn ngữ: lá cờ + tên viết bằng chính ngôn ngữ đó (ai cũng tìm được thứ tiếng của mình)
+        self.language = QComboBox()
+        self.language.setIconSize(QSize(24, 16))
+        for code in LANGUAGES:
+            self.language.addItem(flag_icon(code), LANGUAGE_NAMES[code], code)
+        self.language.setCurrentIndex(max(0, self.language.findData(settings.language)))
+        form.addRow(tr("settings.language"), self.language)
         self.theme = QComboBox()
         for key in THEMES:
-            self.theme.addItem(THEME_LABELS[key], key)
+            self.theme.addItem(theme_label(key), key)
         self.theme.setCurrentIndex(self.theme.findData(settings.theme))
-        form.addRow("Chủ đề", self.theme)
+        form.addRow(tr("settings.theme"), self.theme)
         self.accent = AccentPicker(settings.accent, theme=settings.theme)
-        form.addRow("Màu nhấn", self.accent)
+        form.addRow(tr("settings.accent"), self.accent)
         self.color_by = QComboBox()
         for key in COLOR_BY:
-            self.color_by.addItem(COLOR_BY_LABELS[key], key)
+            self.color_by.addItem(color_by_label(key), key)
         self.color_by.setCurrentIndex(self.color_by.findData(settings.color_by))
-        form.addRow("Tô màu lịch theo", self.color_by)
+        form.addRow(tr("settings.color_by"), self.color_by)
         self.default_view = QComboBox()
         for mode in ViewMode:
             self.default_view.addItem(mode.label, mode.value)
         self.default_view.setCurrentIndex(self.default_view.findData(settings.default_view))
-        form.addRow("Xem mặc định", self.default_view)
+        form.addRow(tr("settings.default_view"), self.default_view)
         self.theme.currentIndexChanged.connect(self._on_look_changed)
         self.accent.accent_changed.connect(lambda _: self._on_look_changed())
 
         # ---- Ảnh nền
         root.addWidget(_divider())
-        root.addWidget(_section("Ảnh nền", "Ảnh được chép vào Norilan nên xoá hoặc di chuyển file gốc vẫn không sao."))
+        root.addWidget(_section(tr("settings.background"), tr("settings.background_hint")))
         bg_row = QHBoxLayout()
         bg_row.setSpacing(12)
-        self.bg_preview = QLabel("Chưa có ảnh nền", objectName="BackgroundPreview")
+        self.bg_preview = QLabel(tr("settings.bg_none"), objectName="BackgroundPreview")
         self.bg_preview.setFixedSize(176, 99)
         self.bg_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         bg_row.addWidget(self.bg_preview)
         bg_controls = QVBoxLayout()
         bg_buttons = QHBoxLayout()
-        choose = QPushButton("🖼  Chọn ảnh…")
+        choose = QPushButton(tr("settings.bg_choose"))
         choose.clicked.connect(self._choose_background)
-        self.bg_clear = QPushButton("Bỏ ảnh nền")
+        self.bg_clear = QPushButton(tr("settings.bg_clear"))
         self.bg_clear.clicked.connect(self._clear_background)
         bg_buttons.addWidget(choose)
         bg_buttons.addWidget(self.bg_clear)
         bg_buttons.addStretch(1)
         bg_controls.addLayout(bg_buttons)
         visibility_row = QHBoxLayout()
-        visibility_row.addWidget(QLabel("Độ hiện rõ"))
+        visibility_row.addWidget(QLabel(tr("settings.bg_visibility")))
         self.bg_visibility = QSlider(Qt.Orientation.Horizontal)
         self.bg_visibility.setRange(10, 90)
         self.bg_visibility.setValue(int(settings.background_visibility))
-        self.bg_visibility.setToolTip("Càng cao ảnh càng rõ (các ô lịch càng trong suốt)")
+        self.bg_visibility.setToolTip(tr("settings.bg_visibility_tooltip"))
         visibility_row.addWidget(self.bg_visibility, 1)
         bg_controls.addLayout(visibility_row)
-        self.bg_blur = QCheckBox("Làm mờ ảnh (chữ dễ đọc hơn)")
+        self.bg_blur = QCheckBox(tr("settings.bg_blur"))
         self.bg_blur.setChecked(settings.background_blur)
         bg_controls.addWidget(self.bg_blur)
         bg_controls.addStretch(1)
@@ -156,8 +165,7 @@ class SettingsDialog(QDialog):
 
         # ---- Màu môn học
         root.addWidget(_divider())
-        root.addWidget(_section("Màu môn học", "Mỗi môn có một màu trên lịch, giống thẻ màu trong Notion. "
-                                                "Môn mới được tự gán màu; bấm để đổi."))
+        root.addWidget(_section(tr("settings.subject_colors"), tr("settings.subject_colors_hint")))
         grid_host = QWidget()
         grid = QGridLayout(grid_host)
         grid.setContentsMargins(0, 4, 0, 0)
@@ -166,8 +174,7 @@ class SettingsDialog(QDialog):
         grid.setColumnStretch(0, 1)
         resolver = ColorResolver("subject", subject_colors)
         if not subjects:
-            empty = QLabel("Chưa có môn học nào. Môn học sẽ xuất hiện ở đây khi bạn thêm bài tập.",
-                           objectName="SettingsHint")
+            empty = QLabel(tr("settings.subjects_empty"), objectName="SettingsHint")
             empty.setWordWrap(True)
             grid.addWidget(empty, 0, 0)
         for row, subject in enumerate(sorted(subjects, key=str.casefold)):
@@ -182,9 +189,9 @@ class SettingsDialog(QDialog):
 
         # ---- Nhắc việc
         root.addWidget(_divider())
-        root.addWidget(_section("Nhắc việc", "Thời gian nhắc trước cho từng bài tập / sự kiện đặt trong cửa sổ thêm–sửa."))
+        root.addWidget(_section(tr("settings.reminders"), tr("settings.reminders_hint")))
         digest_row = QHBoxLayout()
-        self.digest_enabled = QCheckBox("Thông báo tổng hợp việc ngày mai lúc")
+        self.digest_enabled = QCheckBox(tr("settings.digest"))
         self.digest_enabled.setChecked(settings.daily_digest_enabled)
         self.digest_time = QTimeEdit()
         self.digest_time.setDisplayFormat("HH:mm")
@@ -199,15 +206,17 @@ class SettingsDialog(QDialog):
 
         # ---- Dọn dẹp
         root.addWidget(_divider())
-        root.addWidget(_section("Dọn dẹp", "Chỉ áp dụng cho bài tập đã xong; sự kiện không bị xoá."))
+        root.addWidget(_section(tr("settings.cleanup"), tr("settings.cleanup_hint")))
         purge_row = QHBoxLayout()
-        purge_row.addWidget(QLabel("Tự xoá bài tập đã xong sau"))
+        purge_row.addWidget(QLabel(tr("settings.purge_label")))
         self.auto_delete = QComboBox()
         for days in AUTO_DELETE_CHOICES:
-            self.auto_delete.addItem("Không bao giờ" if days == 0 else f"{days} ngày", days)
+            label = tr("settings.purge_never") if days == 0 else tr("settings.purge_days", days=days, count=days)
+            self.auto_delete.addItem(label, days)
         index = self.auto_delete.findData(int(settings.auto_delete_done_days))
         if index < 0:  # giá trị tuỳ chỉnh trong settings.json
-            self.auto_delete.addItem(f"{settings.auto_delete_done_days} ngày", int(settings.auto_delete_done_days))
+            custom = int(settings.auto_delete_done_days)
+            self.auto_delete.addItem(tr("settings.purge_days", days=custom, count=custom), custom)
             index = self.auto_delete.count() - 1
         self.auto_delete.setCurrentIndex(index)
         purge_row.addWidget(self.auto_delete)
@@ -221,11 +230,11 @@ class SettingsDialog(QDialog):
 
         # ---- Dữ liệu
         root.addWidget(_divider())
-        root.addWidget(_section("Dữ liệu", "Bản sao lưu là một file .zip gồm bài tập, sự kiện, cài đặt, "
-                                           "bản sao file đính kèm và ảnh nền."))
+        root.addWidget(_section(tr("settings.data"), tr("settings.data_hint")))
         data_row = QHBoxLayout()
-        for text, signal in (("💾  Sao lưu…", self.backup_requested), ("♻️  Khôi phục…", self.restore_requested),
-                             ("📂  Mở thư mục dữ liệu", self.open_data_requested)):
+        for text, signal in ((tr("settings.backup"), self.backup_requested),
+                             (tr("settings.restore"), self.restore_requested),
+                             (tr("settings.open_data"), self.open_data_requested)):
             button = QPushButton(text)
             button.clicked.connect(signal)
             data_row.addWidget(button)
@@ -234,15 +243,15 @@ class SettingsDialog(QDialog):
 
         # ---- Hệ thống
         root.addWidget(_divider())
-        root.addWidget(_section("Hệ thống"))
-        self.minimize_to_tray = QCheckBox("Đóng cửa sổ thì thu xuống khay hệ thống (vẫn chạy để nhắc việc)")
+        root.addWidget(_section(tr("settings.system")))
+        self.minimize_to_tray = QCheckBox(tr("settings.tray"))
         self.minimize_to_tray.setChecked(settings.minimize_to_tray)
-        self.autostart = QCheckBox("Khởi động cùng Windows (chạy ẩn ở khay)")
+        self.autostart = QCheckBox(tr("settings.autostart"))
         self.autostart.setChecked(settings.autostart and autostart_supported)
         self.autostart.setEnabled(autostart_supported)
         if not autostart_supported:
-            self.autostart.setToolTip("Chỉ có trên Windows.")
-        self.copy_default = QCheckBox("Mặc định lưu bản sao file đính kèm vào Norilan")
+            self.autostart.setToolTip(tr("settings.autostart_tooltip"))
+        self.copy_default = QCheckBox(tr("settings.copy_default"))
         self.copy_default.setChecked(settings.copy_attachments_to_app_dir)
         for box in (self.minimize_to_tray, self.autostart, self.copy_default):
             root.addWidget(box)
@@ -253,9 +262,9 @@ class SettingsDialog(QDialog):
         buttons = QHBoxLayout()
         buttons.setContentsMargins(24, 0, 24, 0)
         buttons.addStretch(1)
-        cancel = QPushButton("Huỷ")
+        cancel = QPushButton(tr("common.cancel"))
         cancel.clicked.connect(self.reject)
-        save = QPushButton("Lưu", objectName="PrimaryButton")
+        save = QPushButton(tr("common.save"), objectName="PrimaryButton")
         save.setDefault(True)
         save.clicked.connect(self.accept)
         buttons.addWidget(cancel)
@@ -310,7 +319,7 @@ class SettingsDialog(QDialog):
         pixmap = load_background(self._background, blur=self.bg_blur.isChecked()) if has else None
         if pixmap is None:
             self.bg_preview.setPixmap(QPixmap())
-            self.bg_preview.setText("Chưa có ảnh nền")
+            self.bg_preview.setText(tr("settings.bg_none"))
             return
         ratio = self.bg_preview.devicePixelRatioF()
         size = self.bg_preview.size() * ratio
@@ -328,9 +337,9 @@ class SettingsDialog(QDialog):
             self.purge_warning.hide()
             return
         count = self._purge_preview(days)
-        text = "⚠ Xoá vĩnh viễn, không hoàn tác được (trừ khi khôi phục từ bản sao lưu)."
+        text = tr("settings.purge_warning")
         if count:
-            text += f" Khi bấm Lưu, {count} bài tập đã xong hơn {days} ngày sẽ bị xoá ngay."
+            text += " " + tr("settings.purge_count", count=count, days=days)
         self.purge_warning.setText(text)
         self.purge_warning.show()
 
@@ -340,6 +349,7 @@ class SettingsDialog(QDialog):
         return replace(
             self._original,
             theme=self.theme.currentData(),
+            language=self.language.currentData(),
             accent=self.accent.accent(),
             color_by=self.color_by.currentData(),
             default_view=self.default_view.currentData(),

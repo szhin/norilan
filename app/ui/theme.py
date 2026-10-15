@@ -9,7 +9,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QGuiApplication, QPalette
 from PySide6.QtWidgets import QApplication, QWidget
 
-from app.colors import DARK_TONES, LIGHT_TONES, accent_tokens, mix
+from app.colors import DARK_TONES, LIGHT_TONES, accent_tokens, gradient_stops, is_gradient, mix, readable_text_color
 
 LIGHT: dict[str, str] = {
     "bg": "#ffffff", "text": "#37352f", "text_muted": "#787774", "text_faint": "#a5a29c",
@@ -336,6 +336,35 @@ def apply_theme(
     _current["tokens"] = build_tokens(theme, accent, background_visibility)
     app.setPalette(palette(theme, accent))
     app.setStyleSheet(stylesheet(theme, accent, background_visibility))
+
+
+# Trạng thái có màu riêng trong QSS chung (đè lên tone): chip/thanh của việc đã xong hoặc quá hạn.
+STATE_OWNS_COLOR = ("done", "overdue")
+
+
+def gradient_qss(tone: str, *, vertical: bool = False) -> str:
+    """QSS của một tone gradient: nền chuyển màu (ngang; dọc cho thanh màu bên thẻ) + chữ đủ tương phản."""
+    start, end = gradient_stops(tone)
+    x2, y2 = (0, 1) if vertical else (1, 0)
+    return (f"background: qlineargradient(x1:0, y1:0, x2:{x2}, y2:{y2}, stop:0 {start}, stop:1 {end}); "
+            f"color: {readable_text_color(start, end)};")
+
+
+def apply_tone(widget: QWidget, tone: str, *, vertical: bool = False, active: bool = True) -> None:
+    """Gán tone cho widget (chip, thẻ màu, thanh màu).
+
+    Tone thường chỉ cần dynamic property 'tone' – stylesheet chung của app tô màu. Gradient có vô số giá trị
+    nên không có luật dựng sẵn: gắn stylesheet riêng lên widget. `active=False` (xem STATE_OWNS_COLOR) thì
+    bỏ stylesheet riêng để màu theo trạng thái trong stylesheet chung được áp dụng.
+    """
+    sheet = gradient_qss(tone, vertical=vertical) if active and is_gradient(tone) else ""
+    changed = widget.property("tone") != tone
+    widget.setProperty("tone", tone)
+    if widget.styleSheet() != sheet:
+        widget.setStyleSheet(sheet)
+        changed = True
+    if changed:
+        repolish(widget)
 
 
 def repolish(widget: QWidget) -> None:

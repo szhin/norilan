@@ -17,6 +17,7 @@ from app import APP_NAME, links, paths
 from app.backup import BackupError, create_backup, default_backup_name, prune_backups, read_manifest, restore_backup
 from app.colors import accent_color
 from app.files import FileService
+from app.i18n import tr
 from app.maintenance import count_purgeable, purge_done
 from app.notifier import Notifier, RecordingNotifier, WinotifyNotifier, winotify_available
 from app.reminders import Notification, ReminderService
@@ -28,6 +29,7 @@ from app.tray import Tray
 from app.ui import prompts
 from app.ui.background import cleanup_backgrounds, load_background
 from app.ui.icon import app_icon, render_icon, save_icon_png
+from app.ui.language import apply_language
 from app.ui.main_window import MainWindow
 from app.ui.settings_dialog import SettingsDialog
 from app.ui.theme import apply_theme, current_tokens, resolve_dark
@@ -36,8 +38,11 @@ log = logging.getLogger(__name__)
 
 REMINDER_INTERVAL_MS = 20_000   # kiểm tra nhắc việc mỗi 20 giây
 FIRST_CHECK_DELAY_MS = 3_000    # lần đầu: vài giây sau khi mở app
-BACKUP_FILTER = "Bản sao lưu Norilan (*.zip)"
 SAFETY_BACKUPS_KEPT = 5
+
+
+def backup_filter() -> str:
+    return f"{tr('backup.filter')} (*.zip)"
 
 
 class TrayNotifier:
@@ -71,6 +76,7 @@ class AppController(QObject):
         self._data_dir = settings_path.parent
         self._bg_cache: dict[tuple[str, bool], QPixmap | None] = {}
 
+        apply_language(settings.language)  # trước khi dựng bất kỳ widget nào
         self.window = MainWindow(repo, settings, files=self._files, clock=clock)
         self.window.settings_requested.connect(self.open_settings)
         self.window.hidden_to_tray.connect(self._on_hidden_to_tray)
@@ -158,8 +164,7 @@ class AppController(QObject):
 
     def _on_hidden_to_tray(self) -> None:
         if self.tray is not None and not self._settings.tray_hint_shown:
-            self.tray.notify(f"{APP_NAME} vẫn đang chạy",
-                             "Norilan thu nhỏ xuống khay để nhắc việc. Chuột phải vào biểu tượng → Thoát để tắt hẳn.")
+            self.tray.notify(tr("tray.hint_title", app=APP_NAME), tr("tray.hint_body"))
             self._save(replace(self._settings, tray_hint_shown=True))
 
     def _on_tray_message_clicked(self) -> None:
@@ -196,9 +201,9 @@ class AppController(QObject):
         today = len(self._repo.items_on(now.date(), include_done=False))
         tomorrow = len(self._repo.items_on(now.date() + timedelta(days=1), include_done=False))
         overdue = len(self._repo.overdue_tasks(now))
-        text = f"{APP_NAME}\nHôm nay: {today} việc · Ngày mai: {tomorrow} việc"
+        text = tr("tray.tooltip", app=APP_NAME, today=today, tomorrow=tomorrow)
         if overdue:
-            text += f"\nQuá hạn: {overdue}"
+            text += "\n" + tr("tray.tooltip_overdue", overdue=overdue)
         self.tray.set_tooltip(text)
 
     # ------------------------------------------------------------------ Cài đặt
@@ -239,10 +244,20 @@ class AppController(QObject):
                 self._integration.set_autostart(new.autostart)
             except OSError as exc:
                 log.exception("Không đổi được khởi động cùng Windows")
-                prompts.show_error(self.window, "Không bật/tắt được khởi động cùng Windows.", str(exc))
+                prompts.show_error(self.window, tr("autostart.error"), str(exc))
+        if new.language != old.language:
+            self._apply_language(new.language)
         self._apply_look()
         self.window.apply_settings(new)
         self._update_tray_tooltip()
+
+    def _apply_language(self, code: str) -> None:
+        """Đổi ngôn ngữ ngay, không cần mở lại app: dựng lại cửa sổ chính và menu khay.
+        Ảnh nền, logo… gắn với widget cũ nên người gọi phải _apply_look() sau đó."""
+        apply_language(code)
+        self.window.retranslate()
+        if self.tray is not None:
+            self.tray.retranslate()
 
     def _save(self, settings: Settings) -> None:
         self._settings = settings
@@ -284,8 +299,8 @@ class AppController(QObject):
     def backup(self, parent: QWidget | None = None) -> Path | None:
         now = self._clock()
         documents = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation)
-        path = prompts.ask_save_path(parent or self.window, "Lưu bản sao lưu",
-                                     str(Path(documents) / default_backup_name(now)), BACKUP_FILTER)
+        path = prompts.ask_save_path(parent or self.window, tr("backup.save_title"),
+                                     str(Path(documents) / default_backup_name(now)), backup_filter())
         if not path:
             return None
         dest = Path(path) if path.lower().endswith(".zip") else Path(path + ".zip")
@@ -293,14 +308,14 @@ class AppController(QObject):
             create_backup(self._repo.connection, dest, data_dir=self._data_dir, now=now)
         except (OSError, sqlite3.Error) as exc:
             log.exception("Sao lưu thất bại")
-            prompts.show_error(parent or self.window, "Không sao lưu được.", str(exc))
+            prompts.show_error(parent or self.window, tr("backup.failed"), str(exc))
             return None
-        prompts.show_info(parent or self.window, "Đã sao lưu xong.", str(dest))
+        prompts.show_info(parent or self.window, tr("backup.done"), str(dest))
         return dest
 
     def restore(self, parent: QWidget | None = None) -> bool:
         parent = parent or self.window
-        path = prompts.ask_open_path(parent, "Chọn bản sao lưu để khôi phục", BACKUP_FILTER)
+        path = prompts.ask_open_path(parent, tr("restore.pick_title"), backup_filter())
         if not path:
             return False
         try:
@@ -308,12 +323,10 @@ class AppController(QObject):
         except BackupError as exc:
             prompts.show_error(parent, str(exc))
             return False
-        created = str(manifest.get("created_at", "?")).replace("T", " lúc ")
+        created = str(manifest.get("created_at", "?")).replace("T", tr("restore.created_sep"))
         if not prompts.confirm(
-            parent, "Khôi phục dữ liệu",
-            f"Khôi phục bản sao lưu tạo ngày {created}?\n\nToàn bộ bài tập, sự kiện và cài đặt hiện tại sẽ "
-            "được thay thế. Norilan sẽ tự sao lưu dữ liệu hiện tại vào thư mục backups trước.",
-            ok_text="Khôi phục",
+            parent, tr("restore.confirm_title"), tr("restore.confirm_text", created=created),
+            ok_text=tr("restore.confirm_ok"),
         ):
             return False
         now = self._clock()
@@ -327,15 +340,14 @@ class AppController(QObject):
             return False
         except (OSError, sqlite3.Error) as exc:
             log.exception("Khôi phục thất bại")
-            prompts.show_error(parent, "Khôi phục không thành công.", str(exc))
+            prompts.show_error(parent, tr("restore.failed"), str(exc))
             return False
         # Khởi động cùng Windows là cài đặt của máy này, không lấy theo bản sao lưu.
         restored = replace(load_settings(self._settings_path), autostart=self._settings.autostart,
                            tray_hint_shown=self._settings.tray_hint_shown)
         self._bg_cache.clear()
         self.apply_settings(restored)
-        prompts.show_info(parent, "Đã khôi phục dữ liệu.",
-                          f"Bản dữ liệu trước đó được lưu tại:\n{safety}")
+        prompts.show_info(parent, tr("restore.done"), tr("restore.done_detail", path=safety))
         return True
 
     def _restore_from_settings(self, dialog: SettingsDialog) -> None:
@@ -347,7 +359,7 @@ class AppController(QObject):
         try:
             self._files.open_folder(str(self._data_dir))
         except OSError as exc:
-            prompts.show_error(self.window, "Không mở được thư mục dữ liệu.", str(exc))
+            prompts.show_error(self.window, tr("folder.open_failed"), str(exc))
 
     def _on_system_scheme_changed(self, *_args) -> None:  # type: ignore[no-untyped-def]
         if self._settings.theme == "system":
