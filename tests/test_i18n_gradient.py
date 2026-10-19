@@ -21,7 +21,7 @@ from app.colors import (
     tone_label,
 )
 from app.i18n import LANGUAGES, tr
-from app.models import Event, Priority, Task, TaskStatus, ValidationError
+from app.models import Event, Priority, Deadline, DeadlineStatus, ValidationError
 from app.settings import Settings, load_settings, save_settings
 
 APP_DIR = Path(__file__).resolve().parent.parent / "app"
@@ -64,14 +64,15 @@ def test_every_key_used_in_code_exists():
     pattern = re.compile(r"\btr(?:_seq)?\(\s*([\"'])([\w.]+)\1")
     used = {m.group(2) for path in APP_DIR.rglob("*.py") for m in pattern.finditer(path.read_text(encoding="utf-8"))}
     dynamic = (
-        [f"tone.{t}" for t in TONES] + [f"status.{s.value}" for s in TaskStatus]
+        [f"tone.{t}" for t in TONES] + [f"status.{s.value}" for s in DeadlineStatus]
         + [f"priority.{p.name.lower()}" for p in Priority] + [f"view.{v.value}" for v in ViewMode]
         + [f"remind.unit.{key}" for key, _ in REMIND_UNITS]
         + [f"nav.{k}" for k in ("calendar", "today", "tomorrow", "upcoming", "overdue")]
         + [f"field.{k}" for k in ("due", "status", "priority", "subject", "remind", "notes", "attachments",
                                    "time", "location")]
         + [f"{p}_{w}" for p in ("missing.title", "missing.text", "missing.detail") for w in ("file", "folder")]
-        + [f"delete.{w}_{s}" for w in ("task", "event") for s in ("title", "text")]
+        + [f"delete.{w}_{s}" for w in ("deadline", "study", "event") for s in ("title", "text")]
+        + [f"kind.{k}" for k in ("deadline", "study", "event")]
         + [f"theme.{t}" for t in ("light", "dark", "system")] + [f"color_by.{k}" for k in ("subject", "type")]
     )
     missing = sorted(k for k in used | set(dynamic) if k not in i18n._CATALOGS["vi"])
@@ -98,13 +99,13 @@ def test_calendar_labels_per_language(code, heading, month, minutes):
     assert day_heading(day) == heading
     assert period_title(ViewMode.MONTH, day) == month
     assert format_minutes(1530) == minutes
-    assert TaskStatus.DONE.label == tr("status.done")
+    assert DeadlineStatus.DONE.label == tr("status.done")
 
 
 def test_validation_messages_follow_language():
     i18n.set_language("en")
     with pytest.raises(ValidationError, match="title cannot be empty"):
-        Task(" ", datetime(2026, 10, 14)).validate()
+        Deadline(" ", datetime(2026, 10, 14)).validate()
 
 
 def test_language_setting_saved_and_validated(tmp_path):
@@ -134,7 +135,7 @@ def test_readable_text_color_picks_contrast():
 def test_gradient_for_subjects_and_events():
     due = datetime(2026, 10, 15, 9)
     resolver = ColorResolver("subject", {"Toán": SUNSET})
-    assert resolver.tone(Task("A", due, subject="Toán")) == SUNSET
+    assert resolver.tone(Deadline("A", due, subject="Toán")) == SUNSET
     event = Event("Họp", due, due, color=SUNSET)
     event.validate()  # màu gradient hợp lệ cho sự kiện
     assert resolver.tone(event) == SUNSET
@@ -191,7 +192,7 @@ def test_chip_paints_gradient_but_status_color_wins(qapp):
     from app.ui.widgets import Chip
 
     chip = Chip()
-    task = Task("Lab", datetime(2026, 10, 15, 9), id=1)
+    task = Deadline("Lab", datetime(2026, 10, 15, 9), id=1)
     chip.set_item(task, task.due_at.date(), datetime(2026, 10, 14, 9), SUNSET)
     assert "qlineargradient" in chip.styleSheet() and chip.property("tone") == SUNSET
     chip.set_item(task, task.due_at.date(), datetime(2026, 10, 16, 9), SUNSET)  # đã quá hạn
@@ -215,7 +216,7 @@ def controller(qapp, repo, launcher, prompts_stub):
 
 
 def test_switch_language_in_settings_rebuilds_ui(controller, repo):
-    task = repo.add_task(Task("Lab 2", datetime(2026, 10, 14, 23, 59), subject="Toán"))
+    task = repo.add_deadline(Deadline("Lab 2", datetime(2026, 10, 14, 23, 59), subject="Toán"))
     controller.window.open_item(task.id)
     assert controller.window.period_label.text() == "Tháng 10, 2026"
 
@@ -233,10 +234,51 @@ def test_switch_language_in_settings_rebuilds_ui(controller, repo):
     assert controller.settings.language == "en" and i18n.current_language() == "en"
     assert w.period_label.text() == "October 2026"
     assert w.panel.detail_item_id() == task.id                 # vẫn mở đúng mục như trước khi đổi
-    assert w.panel.detail.field_values()["Due"] == "23:59 · Wednesday, 14/10/2026"
+    assert w.panel.detail.field_values()["Due"] == "23:59 · Wednesday, 14/10/2026 · 14 hours left"
     assert w.central.findChild(type(w.sidebar)) is w.sidebar   # sidebar mới nằm trong cửa sổ
     assert repo.subject_colors()["Toán"] == SUNSET
     assert w.month_view.cell_for(date(2026, 10, 14)).chip_tones() == [SUNSET]
     w.go_today()  # phím tắt/nút vẫn chạy trên widget mới
     w.panel.show_list_page()
     assert w.panel.title() == "Wednesday, 14/10/2026"
+
+
+# ------------------------------------------------------------------ Deadline / Study time: đủ khoá, có dịch thật
+@pytest.mark.parametrize("code", [c for c in LANGUAGES if c != "vi"])
+def test_no_language_misses_a_key_that_vi_has(code):
+    missing = sorted(set(i18n._CATALOGS["vi"]) - set(i18n._CATALOGS[code]))
+    assert not missing, f"{code}.py thiếu {len(missing)} khoá có trong vi.py: {missing}"
+
+
+NEW_KEY_PREFIXES = ("study.", "badge.", "panel.study_", "panel.add_study", "panel.linked_deadline", "left.",
+                    "delete.links_", "delete.study_", "prompt.study_after_", "toolbar.new_study", "notify.study",
+                    "error.study_", "common.yes", "common.no", "kind.study", "countdown.", "overlay.",
+                    "notify.study_end")
+# Thuật ngữ được chủ ý dùng chung giữa hai ngôn ngữ (vi và en cùng dùng "Deadline" / "Study time"; "No" es = en)
+SHARED_WITH_VI = {"kind.study", "toolbar.new_study", "study.deadline", "prompt.study_after_title", "overlay.deadline"}
+SHARED_WITH_EN = {("es", "common.no")}
+
+
+@pytest.mark.parametrize("code", ["en", "es", "zh", "ja"])
+def test_new_keys_are_translated_not_copied(code):
+    """Khoá mới của Deadline/Study time không được để nguyên tiếng Việt, và es/zh/ja không được là tiếng Anh."""
+    vi, own, en = i18n._CATALOGS["vi"], i18n._CATALOGS[code], i18n._CATALOGS["en"]
+    for key in (k for k in vi if k.startswith(NEW_KEY_PREFIXES)):
+        if not (code == "en" and key in SHARED_WITH_VI):
+            assert _forms(own[key]) != _forms(vi[key]), f"{code}:{key} còn là tiếng Việt"
+        if code != "en" and (code, key) not in SHARED_WITH_EN:
+            assert _forms(own[key]) != _forms(en[key]), f"{code}:{key} còn là tiếng Anh"
+
+
+@pytest.mark.parametrize(("code", "deadline", "study"), [
+    ("vi", "Deadline", "Study time"), ("en", "Deadline", "Study time"),
+    ("es", "Fecha límite", "Tiempo de estudio"), ("zh", "截止日期", "学习时间"), ("ja", "締め切り", "学習時間"),
+])
+def test_same_term_for_deadline_and_study_time_everywhere(code, deadline, study):
+    """Một thuật ngữ duy nhất cho mỗi loại trong nhãn nút/hộp thoại/pill/panel."""
+    cat = i18n._CATALOGS[code]
+    assert deadline in cat["kind.deadline"] and study in cat["kind.study"]
+    for key in ("toolbar.new_deadline", "deadline.save_new", "study.deadline", "panel.linked_deadline"):
+        assert deadline.lower() in _forms(cat[key])[-1].lower(), f"{code}:{key}"
+    for key in ("toolbar.new_study", "study.save_new", "panel.add_study", "prompt.study_after_title"):
+        assert study.lower() in _forms(cat[key])[-1].lower(), f"{code}:{key}"

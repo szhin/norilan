@@ -1,4 +1,4 @@
-"""Thẻ mục (task/event) và danh sách thẻ có cuộn, dùng cho panel phải và chế độ xem ngày."""
+"""Thẻ mục (deadline/event) và danh sách thẻ có cuộn, dùng cho panel phải và chế độ xem ngày."""
 from __future__ import annotations
 
 from datetime import date, datetime
@@ -7,10 +7,10 @@ from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtGui import QContextMenuEvent, QMouseEvent
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
-from app.calendar_logic import chip_state, group_label, item_meta
+from app.calendar_logic import chip_state, group_label, item_meta, kind_icon
 from app.colors import ColorResolver
 from app.i18n import tr
-from app.models import CalendarItem, Task
+from app.models import CalendarItem, Deadline, StudyTime
 from app.ui.theme import STATE_OWNS_COLOR, apply_tone, repolish
 from app.ui.widgets import ElidedLabel, set_strike
 
@@ -28,6 +28,7 @@ class ItemCard(QFrame):
         self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.item_id: int = item.id  # type: ignore[assignment]
+        self.setProperty("kind", item.KIND)
         state = chip_state(item, now)
         colors = colors or ColorResolver()
         tone = colors.tone(item)
@@ -37,7 +38,7 @@ class ItemCard(QFrame):
         layout.setSpacing(10)
 
         bar = QFrame(objectName="KindBar")
-        bar.setFixedWidth(3)
+        bar.setFixedWidth(5 if isinstance(item, Deadline) else 3)  # Deadline: thanh dày hơn
         bar.setProperty("state", state)
         apply_tone(bar, tone, vertical=True, active=state not in STATE_OWNS_COLOR)
         layout.addWidget(bar)
@@ -48,13 +49,27 @@ class ItemCard(QFrame):
         self.title.setObjectName("CardTitle")
         self.title.setProperty("state", state)
         set_strike(self.title, state == "done")
+        title_row = QHBoxLayout()
+        title_row.setSpacing(6)
+        self.icon = QLabel(kind_icon(item), objectName="KindIcon")
+        title_row.addWidget(self.icon)
+        title_row.addWidget(self.title, 1)
+        self.study_badge: QLabel | None = None
+        if isinstance(item, Deadline):
+            # Số Study time đã đặt; 0 được tô cảnh báo để nhắc "chưa dành thời gian cho deadline này".
+            zero = item.study_count == 0
+            self.study_badge = QLabel(f"📖 {item.study_count}", objectName="StudyBadge")
+            self.study_badge.setProperty("zero", zero and not item.is_done)
+            self.study_badge.setToolTip(tr("badge.study_none_tooltip") if zero
+                                        else tr("badge.study_tooltip", count=item.study_count))
+            title_row.addWidget(self.study_badge)
         meta = ElidedLabel(item_meta(item, now, with_date=with_date, show_subject=False))
         meta.setObjectName("CardMeta")
         meta.setProperty("state", state)
-        column.addWidget(self.title)
+        column.addLayout(title_row)
         meta_row = QHBoxLayout()
         meta_row.setSpacing(6)
-        if isinstance(item, Task) and item.subject:
+        if isinstance(item, (Deadline, StudyTime)) and item.subject:
             # Môn học hiện như thẻ màu (Notion 'select').
             pill = QLabel(item.subject, objectName="Pill")
             apply_tone(pill, colors.subject_tone(item.subject))

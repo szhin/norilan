@@ -2,9 +2,9 @@
 
 # 📅 Norilan
 
-**Ứng dụng desktop quản lý lịch & bài tập thông minh cho Windows**
+**Ứng dụng desktop quản lý lịch, deadline & thời gian học thông minh cho Windows**
 
-*Mở app, xem lịch, bấm vào bài tập — file tài liệu mở ra ngay lập tức.*
+*Mở app, xem lịch, bấm vào deadline — file tài liệu mở ra ngay lập tức.*
 
 [![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![PySide6](https://img.shields.io/badge/PySide6-Qt6-41CD52?style=flat-square&logo=qt&logoColor=white)](https://doc.qt.io/qtforpython/)
@@ -19,7 +19,7 @@
 | Tính năng | Mô tả |
 |-----------|-------|
 | 📆 **Lịch đa chế độ** | Xem theo Tháng / Tuần / Ngày, điều hướng mượt mà |
-| 📚 **Bài tập & Sự kiện** | Tạo, sửa, xoá với đầy đủ trạng thái, ưu tiên, môn học |
+| 📚 **Deadline, Study time & Sự kiện** | Tạo, sửa, xoá; Deadline có trạng thái, ưu tiên, môn học, đính kèm; Study time là khoảng thời gian học (độc lập hoặc gắn với một Deadline) |
 | 📎 **Đính kèm file** | Kéo-thả file/thư mục/link; bản sao lưu vĩnh viễn trong Norilan |
 | 🔔 **Nhắc việc thông minh** | Toast Windows trước X phút/giờ/ngày + tổng hợp việc ngày mai mỗi tối |
 | 🎨 **Giao diện đẹp** | Sáng / Tối / Theo Windows, ảnh nền mờ, màu theo môn học kiểu Notion |
@@ -49,6 +49,26 @@
 
 ---
 
+### Deadline kết hợp Study time
+
+![Tạo Study time cho một Deadline](docs/screenshots/06_deadline_study_time.png)
+
+> Từ một **Deadline** (panel phải), bấm **+ Thêm Study time**: hộp thoại mở sẵn với cùng tiêu đề, đã liên kết với deadline
+> và điền sẵn môn học. Phần *Study time liên kết* bên dưới liệt kê các buổi đã đặt (bấm để mở); chưa có buổi nào thì hiện
+> nút thêm nhanh. Trên lịch và danh sách, Deadline có biểu tượng ⏳, chữ *còn …* (đổi màu cảnh báo khi dưới 24 giờ) và
+> huy hiệu 📖 đếm số Study time đã đặt (0 được tô nổi bật để nhắc bạn dành thời gian làm).
+
+---
+
+### Đồng hồ đếm ngược Study time
+
+![Đếm ngược Study time dạng phóng to](docs/screenshots/07_countdown_overlay.png)
+
+> Bấm vào đồng hồ nhỏ dưới chi tiết Study time để phóng to: chữ số lớn, tên, khoảng giờ, thanh tiến độ.
+> Dưới 10 phút chữ số đổi màu cảnh báo và Norilan gửi toast nhắc sắp hết giờ. Đóng bằng `Esc`, nút ✕ hoặc bấm nền mờ.
+
+---
+
 ### Cài đặt
 
 ![Cài đặt](docs/screenshots/03_settings.png)
@@ -58,18 +78,18 @@
 
 ---
 
-### Tạo Bài tập — Có đính kèm file
+### Tạo Deadline — Có đính kèm file
 
-![Tạo bài tập với đính kèm](docs/screenshots/04_create_task.png)
+![Tạo deadline với đính kèm](docs/screenshots/04_create_task.png)
 
 > Đặt hạn nộp, trạng thái, ưu tiên, môn học và **đính kèm tài liệu học tập**.
 > Tích ô *"Lưu bản sao file vào Norilan"* để file vẫn mở được dù file gốc bị xoá hay di chuyển.
 
 ---
 
-### Chi tiết Bài tập — Mở file đính kèm
+### Chi tiết Deadline — Mở file đính kèm
 
-![Chi tiết bài tập và mở file](docs/screenshots/05_task_detail.png)
+![Chi tiết deadline và mở file](docs/screenshots/05_task_detail.png)
 
 > Bấm tên file để **mở file ngay lập tức** bằng ứng dụng mặc định.
 > Hover chuột xem đường dẫn đầy đủ. Bấm biểu tượng 📁 để mở thư mục chứa file trong Explorer.
@@ -78,14 +98,53 @@
 
 ## ⚡ Dùng nhanh
 
-### Thêm Bài tập
+### Thêm Deadline
 
 ```
-Cách 1: Bấm nút  [+ Bài tập]  trên thanh công cụ
+Cách 1: Bấm nút  [+ Deadline]  trên thanh công cụ
 Cách 2: Phím tắt  Ctrl + N
 Cách 3: Nhấp đôi vào một ô ngày trên lịch
 Cách 4: Rê chuột vào ngày → bấm nút  [+]  xuất hiện
 ```
+
+Tạo Deadline mới xong, Norilan hỏi *"Đặt thêm thời gian để làm deadline này?"* — chọn **Có** để mở sẵn
+hộp thoại Study time (cùng tiêu đề, đã liên kết với deadline).
+
+### Thêm Study time
+
+```
+Cách 1: Bấm nút  [+ Study time]  trên thanh công cụ
+Cách 2: Phím tắt  Ctrl + Alt + N
+Cách 3: Mở một Deadline → phần "Study time liên kết" → [+ Thêm Study time]
+```
+
+Study time có thể đứng riêng (vd. "Học Tiếng Anh") hoặc gắn với một Deadline chưa xong (ô *Deadline*, mặc định
+để trống). Một Deadline có thể có nhiều Study time. Tiêu đề chỉ được sao chép một lần lúc tạo, không đồng bộ về sau.
+Xoá Deadline còn Study time liên kết → Norilan hỏi *xoá luôn* hay *giữ lại (gỡ liên kết)*; xoá Study time
+không ảnh hưởng Deadline.
+
+### Đồng hồ đếm ngược Study time
+
+Chỉ có ở **Study time** (không có ở Deadline hay Sự kiện). Mở một Study time, dưới phần chi tiết có đồng hồ nhỏ:
+
+```
+• Đang diễn ra   →  ⏱ 0:45:00        (thời gian còn lại tới giờ kết thúc, đổi màu cảnh báo khi ≤ 10 phút)
+• Chưa bắt đầu   →  Bắt đầu sau 1:02:03
+• Đã kết thúc    →  Đã kết thúc
+```
+
+Ví dụ Study time 15:30 – 16:30: lúc 15:30 hiện `1:00:00`, lúc 16:30 hiện `0:00:00`, mở lúc 15:45 hiện `0:45:00`.
+Đồng hồ luôn tính lại từ giờ hệ thống nên không bị lệch khi máy ngủ; chỉ chạy khi nó đang hiện trên màn hình.
+
+**Phóng to:** bấm vào đồng hồ nhỏ → mở lớp phủ toàn cửa sổ với chữ số rất lớn, tên Study time, khoảng giờ,
+deadline liên kết (kèm thời gian còn lại) và thanh tiến độ. Đóng bằng `Esc`, nút ✕ hoặc bấm vào nền mờ.
+Lớp phủ không bao giờ tự mở; khi nó đang mở, phần giao diện bên dưới không thao tác được. Hết giờ khi đang mở thì
+hiện *Đã kết thúc* và giữ nguyên cho tới khi bạn đóng.
+
+**Cảnh báo 10 phút:** đúng 10 phút trước giờ kết thúc, Norilan gửi toast
+*"Chuẩn bị hết thời gian làm bài: …"* (bấm vào toast để mở Study time đó). Toast chạy cả khi cửa sổ đã đóng xuống khay,
+mỗi Study time chỉ một lần (đổi giờ kết thúc thì được cảnh báo lại). Study time ngắn hơn 10 phút không có toast; mở app
+khi còn dưới 10 phút thì toast gửi ngay một lần.
 
 ### Thêm Sự kiện
 
@@ -94,10 +153,10 @@ Cách 1: Bấm nút  [+ Sự kiện]  trên thanh công cụ
 Cách 2: Phím tắt  Ctrl + Shift + N
 ```
 
-### Đính kèm file vào Bài tập
+### Đính kèm file vào Deadline
 
 ```
-Cách 1: Kéo-thả file / thư mục / link vào dialog bài tập
+Cách 1: Kéo-thả file / thư mục / link vào dialog deadline
 Cách 2: Bấm nút [Thêm file...]     → chọn file
 Cách 3: Bấm nút [Thêm thư mục..]  → chọn cả thư mục
 Cách 4: Bấm nút [Thêm link...]    → dán URL
@@ -105,12 +164,12 @@ Cách 4: Bấm nút [Thêm link...]    → dán URL
 
 > 💡 **Mẹo quan trọng:** Tích ✅ *"Lưu bản sao file vào Norilan"* — Norilan tự sao chép file vào
 > `%APPDATA%\Norilan\attachments\`. File vẫn mở được kể cả khi file gốc đã bị **xoá hoặc di chuyển**.
-> Bản sao tự xoá khi bạn xoá bài tập hoặc gỡ đính kèm.
+> Bản sao tự xoá khi bạn xoá deadline hoặc gỡ đính kèm.
 
 ### Mở file đính kèm
 
 ```
-• Bấm vào bài tập để mở chi tiết ở sidebar phải
+• Bấm vào deadline để mở chi tiết ở sidebar phải (phía dưới là các Study time liên kết)
 • Bấm tên file           → mở file bằng ứng dụng mặc định
 • Bấm biểu tượng 📁      → mở thư mục chứa file trong Explorer
 • Chuột phải vào chip    → menu: Mở / Sửa / Gỡ đính kèm
@@ -123,7 +182,8 @@ Cách 4: Bấm nút [Thêm link...]    → dán URL
 
 | Phím tắt | Chức năng |
 |----------|-----------|
-| `Ctrl + N` | Thêm bài tập mới |
+| `Ctrl + N` | Thêm Deadline mới |
+| `Ctrl + Alt + N` | Thêm Study time mới |
 | `Ctrl + Shift + N` | Thêm sự kiện mới |
 | `Ctrl + E` | Sửa mục đang xem |
 | `Ctrl + F` | Mở ô tìm kiếm |
@@ -146,12 +206,16 @@ Cách 4: Bấm nút [Thêm link...]    → dán URL
 - **Bấm X** trên cửa sổ → Norilan thu xuống **khay hệ thống** (góc phải taskbar), vẫn chạy để nhắc việc
 - **Thoát hoàn toàn:** Chuột phải biểu tượng ở khay → **Thoát**
 - **Toast tổng hợp** mỗi tối (mặc định 22:00): *"Ngày mai bạn có N việc"* (mỗi ngày 1 lần)
-- **Nhắc trước** X phút/giờ/ngày: đặt trong cửa sổ thêm/sửa bài tập hoặc sự kiện
+- **Nhắc trước** X phút/giờ/ngày: đặt trong cửa sổ thêm/sửa deadline hoặc sự kiện
+- **Sắp hết giờ làm bài:** toast riêng cho Study time, 10 phút trước giờ kết thúc (xem *Đồng hồ đếm ngược Study time*)
 - **Bấm vào toast** → Norilan mở và cuộn đến đúng mục được nhắc
 - **Khởi động cùng Windows:** Cài đặt → Hệ thống → bật *Khởi động cùng Windows* (chạy ẩn ở khay)
 
-> **Thử nhanh:** Tạo bài tập hạn nộp sau 10 phút, nhắc trước 5 phút → đợi toast xuất hiện.
+> **Thử nhanh:** Tạo deadline hạn nộp sau 10 phút, nhắc trước 5 phút → đợi toast xuất hiện.
 > Hoặc vào Cài đặt → đặt giờ tổng hợp sớm hơn 1 phút so với giờ hiện tại (cần có việc ngày mai).
+>
+> **Thử cảnh báo hết giờ:** tạo Study time bắt đầu sau 1 phút, kết thúc sau 12 phút → toast hiện sau khoảng 3 phút
+> (toast được kiểm tra mỗi ~20 giây nên có thể trễ tới 20 giây).
 
 ---
 
@@ -196,7 +260,7 @@ Cách 4: Bấm nút [Thêm link...]    → dán URL
 - Trước khi khôi phục, Norilan tự động sao lưu dữ liệu hiện tại vào `backups\`
 - Có thể khôi phục sang máy khác ✅
 
-**Tự xoá bài tập đã xong:** Cài đặt → Dọn dẹp → chọn 7 / 14 / 30 / 90 ngày (mặc định tắt)
+**Tự xoá deadline đã xong:** Cài đặt → Dọn dẹp → chọn 7 / 14 / 30 / 90 ngày (mặc định tắt)
 
 ---
 
@@ -280,7 +344,8 @@ Norilan/
 │   ├── cli.py                 # CLI kiểm tra dữ liệu
 │   ├── paths.py               # Đường dẫn dữ liệu
 │   ├── timeutil.py            # Quy ước thời gian: ISO 8601, giờ local
-│   ├── models.py              # Task, Event, Attachment (dataclass thuần)
+│   ├── models.py              # Deadline, StudyTime, Event, Attachment (dataclass thuần)
+│   ├── countdown.py           # Đếm ngược Study time: upcoming/running/ended, mốc cảnh báo 10 phút
 │   ├── db.py                  # Kết nối, schema, migration, hàm fold()
 │   ├── repository.py          # CRUD + truy vấn lịch/sidebar/tìm kiếm/nhắc việc
 │   ├── settings.py            # settings.json (ghi atomic, chịu được file hỏng)
@@ -298,9 +363,10 @@ Norilan/
 │       ├── main_window.py     # Cửa sổ chính
 │       ├── sidebar.py         # Sidebar lọc nhanh + tìm kiếm
 │       ├── calendar_views.py  # Lịch Tháng / Tuần / Ngày
-│       ├── side_panel.py      # Panel chi tiết bên phải
+│       ├── side_panel.py      # Panel chi tiết bên phải (+ đồng hồ nhỏ của Study time)
+│       ├── overlay.py         # Lớp phủ đếm ngược toàn cửa sổ
 │       ├── item_list.py       # Danh sách mục
-│       ├── dialogs.py         # Dialog thêm/sửa bài tập & sự kiện
+│       ├── dialogs.py         # Dialog thêm/sửa deadline, study time & sự kiện
 │       ├── settings_dialog.py
 │       ├── app_controller.py  # Điều phối toàn bộ
 │       ├── color_picker.py
@@ -328,7 +394,7 @@ Norilan/
 <summary><b>📎 File đính kèm báo không tìm thấy</b></summary>
 
 - File gốc đã bị di chuyển/xoá mà chưa tích *"Lưu bản sao"*: app báo lỗi và cho chọn lại đường dẫn hoặc gỡ đính kèm
-- Lần sau nên tích ✅ *"Lưu bản sao file vào Norilan"* khi tạo bài tập
+- Lần sau nên tích ✅ *"Lưu bản sao file vào Norilan"* khi tạo deadline
 
 </details>
 

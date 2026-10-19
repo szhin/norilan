@@ -14,7 +14,7 @@ class ValidationError(ValueError):
     """Dữ liệu không hợp lệ; message đã dịch theo ngôn ngữ hiện tại để UI hiển thị trực tiếp."""
 
 
-class TaskStatus(StrEnum):
+class DeadlineStatus(StrEnum):
     TODO = "todo"
     IN_PROGRESS = "in_progress"
     DONE = "done"
@@ -86,14 +86,14 @@ class Attachment:
 
 
 @dataclass(slots=True)
-class Task:
-    """Bài tập / việc cần làm."""
+class Deadline:
+    """Deadline: việc có hạn nộp (trước đây gọi là 'Bài tập')."""
 
-    KIND: ClassVar[str] = "task"
+    KIND: ClassVar[str] = "deadline"
 
     title: str
     due_at: datetime
-    status: TaskStatus = TaskStatus.TODO
+    status: DeadlineStatus = DeadlineStatus.TODO
     priority: Priority = Priority.NORMAL
     subject: str = ""
     notes: str = ""
@@ -102,6 +102,7 @@ class Task:
     id: int | None = None
     reminder_sent_at: datetime | None = None
     completed_at: datetime | None = None  # do repository ghi khi chuyển sang 'Xong'
+    study_count: int = 0                  # số Study time liên kết – repository nạp khi đọc, không lưu
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -112,7 +113,7 @@ class Task:
 
     @property
     def is_done(self) -> bool:
-        return self.status == TaskStatus.DONE
+        return self.status == DeadlineStatus.DONE
 
     def is_overdue(self, now: datetime) -> bool:
         return not self.is_done and self.due_at < now
@@ -125,7 +126,7 @@ class Task:
         if not self.title or not self.title.strip():
             raise ValidationError(tr("error.title_empty"))
         try:
-            TaskStatus(self.status)
+            DeadlineStatus(self.status)
             Priority(self.priority)
         except ValueError as exc:
             raise ValidationError(str(exc)) from exc
@@ -161,4 +162,34 @@ class Event:
         _check_color(self.color)
 
 
-CalendarItem = Task | Event
+@dataclass(slots=True)
+class StudyTime:
+    """Khoảng thời gian dành để học / làm bài. Có thể độc lập hoặc gắn với một Deadline (`deadline_id`).
+
+    Không có đính kèm. Tiêu đề của Study time chỉ được sao chép từ Deadline lúc tạo, không đồng bộ về sau.
+    """
+
+    KIND: ClassVar[str] = "study"
+
+    title: str
+    starts_at: datetime
+    ends_at: datetime
+    subject: str = ""
+    notes: str = ""
+    deadline_id: int | None = None
+    remind_before_minutes: int | None = None  # chưa có UI; giữ để dùng chung cột/nhắc việc của Event
+    id: int | None = None
+    reminder_sent_at: datetime | None = None
+    end_warned_at: datetime | None = None     # đã gửi toast "sắp hết giờ" lúc nào; repository xoá khi ends_at đổi
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def validate(self) -> None:
+        if not self.title or not self.title.strip():
+            raise ValidationError(tr("error.title_empty"))
+        if self.ends_at <= self.starts_at:
+            raise ValidationError(tr("error.end_before_start"))
+        _check_remind(self.remind_before_minutes)
+
+
+CalendarItem = Deadline | Event | StudyTime

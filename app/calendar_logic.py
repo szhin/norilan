@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta
 from enum import StrEnum
 
 from app.i18n import tr, tr_seq
-from app.models import CalendarItem, Event, Priority, Task
+from app.models import CalendarItem, Deadline, Event, Priority, StudyTime
 
 _RELATIVE = {-1: "relative.yesterday", 0: "relative.today", 1: "relative.tomorrow"}
 
@@ -121,7 +121,7 @@ def format_minutes(minutes: int | None) -> str:
 # ------------------------------------------------------------------ Mục trên lịch
 def item_last_day(item: CalendarItem) -> date:
     """Ngày cuối cùng mục còn hiển thị. Event kết thúc đúng 00:00 không chiếm ngày hôm sau."""
-    if isinstance(item, Event) and item.ends_at > item.starts_at:
+    if isinstance(item, (Event, StudyTime)) and item.ends_at > item.starts_at:
         return (item.ends_at - timedelta(seconds=1)).date()
     return item.starts_at.date()
 
@@ -160,20 +160,70 @@ def chip_text(item: CalendarItem, day: date) -> str:
 
 
 def chip_state(item: CalendarItem, now: datetime) -> str:
-    """Trạng thái hiển thị: 'done' | 'overdue' | 'high' | 'normal'."""
-    if isinstance(item, Task):
+    """Trạng thái hiển thị: 'done' | 'overdue' | 'soon' (Deadline còn <24h) | 'high' | 'normal'."""
+    if isinstance(item, Deadline):
         if item.is_done:
             return "done"
         if item.is_overdue(now):
             return "overdue"
+        if is_due_soon(item, now):
+            return "soon"
         if item.priority == Priority.HIGH:
             return "high"
     return "normal"
 
 
+DUE_SOON = timedelta(hours=24)
+
+
+def is_due_soon(deadline: Deadline, now: datetime) -> bool:
+    """Chưa xong, chưa quá hạn và hạn trong vòng 24 giờ tới → tô màu cảnh báo."""
+    return not deadline.is_done and timedelta(0) <= deadline.due_at - now < DUE_SOON
+
+
+def round_for_display(minutes: int) -> int:
+    """Làm tròn cho dễ đọc ('còn 3 giờ' thay vì 'còn 2 giờ 59 phút')."""
+    if minutes >= 1440:
+        return round(minutes / 60) * 60
+    if minutes >= 120:
+        return round(minutes / 15) * 15
+    if minutes >= 60:
+        return round(minutes / 5) * 5
+    return minutes
+
+
+def time_left_text(deadline: Deadline, now: datetime) -> str:
+    """'còn 3 giờ' / 'quá hạn 2 ngày'; Deadline đã xong thì trả về chuỗi rỗng."""
+    if deadline.is_done:
+        return ""
+    minutes = round((deadline.due_at - now).total_seconds() / 60)
+    if minutes == 0:
+        return tr("remind.now")
+    span = format_minutes(round_for_display(abs(minutes)))
+    return tr("left.left" if minutes > 0 else "left.overdue", span=span)
+
+
+# Biểu tượng theo loại (Deadline nổi bật hơn Event/Study time: có icon, viền, đếm Study time)
+KIND_ICONS = {Deadline.KIND: "⏳", StudyTime.KIND: "📖", Event.KIND: "📅"}
+
+
+def kind_icon(item: CalendarItem) -> str:
+    return KIND_ICONS[item.KIND]
+
+
+def chip_label(item: CalendarItem, day: date) -> str:
+    """Chữ trên chip lịch: '⏳ 09:00 Nộp báo cáo 📖2' (Deadline), '📖 19:00 Học Anh' (Study time), 'Họp' như cũ (Event)."""
+    text = chip_text(item, day)
+    if isinstance(item, Deadline):
+        return f"{kind_icon(item)} {text} 📖{item.study_count}"
+    if isinstance(item, StudyTime):
+        return f"{kind_icon(item)} {text}"
+    return text
+
+
 def time_text(item: CalendarItem, *, with_date: bool = False) -> str:
-    """'Hạn 23:59' | '19:00 – 20:30' | '23:00 13/10 – 01:00 14/10'."""
-    if isinstance(item, Task):
+    """'Hạn 23:59' | '19:00 – 20:30' | '23:00 13/10 – 01:00 14/10' (Event và Study time cùng dạng)."""
+    if isinstance(item, Deadline):
         return tr("time.due", time=f"{item.due_at:%H:%M}") + (f" {day_month_text(item.due_at)}" if with_date else "")
     if item.starts_at.date() != item.ends_at.date():
         return (f"{item.starts_at:%H:%M} {day_month_text(item.starts_at)} – "
@@ -183,14 +233,23 @@ def time_text(item: CalendarItem, *, with_date: bool = False) -> str:
 
 
 def item_meta(item: CalendarItem, now: datetime, *, with_date: bool = False, show_subject: bool = True) -> str:
-    """Dòng phụ trên thẻ: 'Hạn 23:59 · Toán · Chưa làm · 📎1' hoặc '19:00 – 20:30 · 📍 Thư viện'."""
+    """Dòng phụ trên thẻ: 'Hạn 23:59 · Toán · Chưa làm · còn 3 giờ · 📎1' hoặc '19:00 – 20:30 · 📍 Thư viện'."""
     parts = [time_text(item, with_date=with_date)]
-    if isinstance(item, Task):
+    if isinstance(item, Deadline):
         if item.subject and show_subject:
             parts.append(item.subject)
-        parts.append(tr("status.overdue") if item.is_overdue(now) else item.status.label)
+        left = time_left_text(item, now)
+        if item.is_overdue(now):
+            parts.append(left or tr("status.overdue"))  # 'quá hạn 23 giờ' đã bao hàm trạng thái
+        else:
+            parts.append(item.status.label)
+            if left:
+                parts.append(left)
         if item.attachments:
             parts.append(f"📎{len(item.attachments)}")
+    elif isinstance(item, StudyTime):
+        if item.subject and show_subject:
+            parts.append(item.subject)
     elif item.location:
         parts.append(f"📍 {item.location}")
     return " · ".join(parts)

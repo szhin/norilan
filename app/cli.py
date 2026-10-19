@@ -10,7 +10,7 @@ from app import APP_NAME, __version__, paths
 from app.db import connect, schema_version
 from app.demo_data import seed_demo
 from app.logging_setup import setup_logging
-from app.models import Task
+from app.models import Deadline, StudyTime
 from app.repository import Repository
 from app.settings import load_settings
 from app.timeutil import now
@@ -20,10 +20,15 @@ log = logging.getLogger(__name__)
 
 def _fmt(item) -> str:  # type: ignore[no-untyped-def]
     when = item.starts_at.strftime("%d/%m %H:%M")
-    if isinstance(item, Task):
+    if isinstance(item, Deadline):
         extra = f"[{item.status.label}] {item.subject}".strip()
         att = f" 📎{len(item.attachments)}" if item.attachments else ""
-        return f"  ✏️  {when}  {item.title}  – {extra}{att}"
+        study = f" 📖{item.study_count}" if item.study_count else ""
+        return f"  ⏳ {when}  {item.title}  – {extra}{att}{study}"
+    if isinstance(item, StudyTime):
+        link = f"  ↳ deadline #{item.deadline_id}" if item.deadline_id else ""
+        subject = f"  [{item.subject}]" if item.subject else ""
+        return f"  📖 {when}–{item.ends_at:%H:%M}  {item.title}{subject}{link}"
     return f"  📅 {when}–{item.ends_at:%H:%M}  {item.title}  @ {item.location or '—'}"
 
 
@@ -52,7 +57,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Database        : {paths.db_path()} (schema v{schema_version(conn)})")
     print(f"Log             : {log_file}")
     print(f"Nhắc tổng hợp   : {settings.daily_digest_time}  | theme: {settings.theme}")
-    print(f"Tổng            : {counts['task']} task, {counts['event']} event\n")
+    print(f"Tổng            : {counts['deadline']} deadline, {counts['study']} study time, "
+          f"{counts['event']} event\n")
 
     if args.search is not None:
         sections = [(f"Kết quả tìm '{args.search}'", repo.search(args.search))]
@@ -60,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
         sections = [
             ("Hôm nay", repo.items_on(current.date())),
             ("Ngày mai", repo.items_on(current.date() + timedelta(days=1))),
-            ("Quá hạn", repo.overdue_tasks(current)),
+            ("Quá hạn", repo.overdue_deadlines(current)),
             ("Sắp tới (7 ngày)", repo.upcoming(current)),
         ]
     for title, items in sections:

@@ -19,7 +19,7 @@ def test_reopen_keeps_data_and_does_not_remigrate(tmp_path):
     c1 = connect(path)
     c1.execute(
         "INSERT INTO items (kind,title,starts_at,status,created_at,updated_at) "
-        "VALUES ('task','A','2026-10-15T09:00:00','todo','t','t')"
+        "VALUES ('deadline','A','2026-10-15T09:00:00','todo','t','t')"
     )
     c1.commit()
     c1.close()

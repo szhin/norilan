@@ -1,4 +1,4 @@
-"""Dialog thêm/sửa Task/Event (chạy offscreen)."""
+"""Dialog thêm/sửa Deadline/Event (chạy offscreen)."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -10,8 +10,8 @@ from PySide6.QtCore import QMimeData, QPointF, Qt, QUrl
 from PySide6.QtGui import QDropEvent
 
 from app.files import FileService
-from app.models import Attachment, AttachmentKind, Event, Priority, Task, TaskStatus
-from app.ui.dialogs import EventDialog, TaskDialog
+from app.models import Attachment, AttachmentKind, Event, Priority, Deadline, DeadlineStatus
+from app.ui.dialogs import EventDialog, DeadlineDialog
 
 pytestmark = pytest.mark.usefixtures("qapp", "prompts_stub")
 DUE = datetime(2026, 10, 15, 23, 59)
@@ -26,15 +26,15 @@ def files_dir(tmp_path):
     return folder
 
 
-def new_dialog(launcher, **kwargs) -> TaskDialog:
-    return TaskDialog(files=FileService(launcher), subjects=["Toán", "Lý"], default_due=DUE, **kwargs)
+def new_dialog(launcher, **kwargs) -> DeadlineDialog:
+    return DeadlineDialog(files=FileService(launcher), subjects=["Toán", "Lý"], default_due=DUE, **kwargs)
 
 
-def test_new_task_defaults(launcher):
+def test_new_deadline_defaults(launcher):
     dlg = new_dialog(launcher)
     assert dlg.due.value() == DUE
     assert dlg.priority.currentData() == Priority.NORMAL
-    assert dlg.status.currentData() == TaskStatus.TODO
+    assert dlg.status.currentData() == DeadlineStatus.TODO
     assert not dlg.save_button.isEnabled()  # chưa có tiêu đề
     dlg.title_edit.setText("Lab 2")
     assert dlg.save_button.isEnabled()
@@ -80,8 +80,8 @@ def test_attachment_buttons_use_prompts(launcher, files_dir, prompts_stub):
 
 
 def test_relink_missing_in_dialog(launcher, files_dir, tmp_path, prompts_stub):
-    task = Task("A", DUE, id=5, attachments=[Attachment(str(tmp_path / "cu.docx"), id=11)])
-    dlg = new_dialog(launcher, task=task)
+    task = Deadline("A", DUE, id=5, attachments=[Attachment(str(tmp_path / "cu.docx"), id=11)])
+    dlg = new_dialog(launcher, deadline=task)
     assert "không tìm thấy" in dlg.attachments.list.item(0).text()
     prompts_stub.missing_action = "relink"
     prompts_stub.replacement = str(files_dir / "lab2.docx")
@@ -105,12 +105,12 @@ def test_drop_files_and_links(launcher, files_dir):
 
 
 def test_edit_task_loads_values(launcher, files_dir):
-    task = Task("Lab", DUE, status=TaskStatus.IN_PROGRESS, priority=Priority.LOW, subject="Toán",
+    task = Deadline("Lab", DUE, status=DeadlineStatus.IN_PROGRESS, priority=Priority.LOW, subject="Toán",
                 remind_before_minutes=1440, id=3, attachments=[Attachment(str(files_dir / "lab2.docx"), id=9)])
-    dlg = new_dialog(launcher, task=task)
+    dlg = new_dialog(launcher, deadline=task)
     assert dlg.reminder.amount.value() == 1 and dlg.reminder.unit.currentData() == 1440
     assert not dlg.copy_files.isChecked()
-    assert dlg.result_item() == Task("Lab", DUE, status=TaskStatus.IN_PROGRESS, priority=Priority.LOW,
+    assert dlg.result_item() == Deadline("Lab", DUE, status=DeadlineStatus.IN_PROGRESS, priority=Priority.LOW,
                                      subject="Toán", remind_before_minutes=1440, id=3,
                                      attachments=[Attachment(str(files_dir / "lab2.docx"), id=9)])
 
@@ -120,8 +120,8 @@ def test_edit_task_with_existing_copy_keeps_copy_option_on(launcher):
 
     copy = paths.attachments_dir() / "lab.docx"
     copy.write_text("x")
-    task = Task("Lab", DUE, id=3, attachments=[Attachment(str(copy), id=9)])
-    assert new_dialog(launcher, task=task).copy_files.isChecked()
+    task = Deadline("Lab", DUE, id=3, attachments=[Attachment(str(copy), id=9)])
+    assert new_dialog(launcher, deadline=task).copy_files.isChecked()
 
 
 def test_event_dialog_keeps_duration_when_start_moves():

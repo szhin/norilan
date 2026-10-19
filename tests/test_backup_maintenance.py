@@ -9,7 +9,7 @@ import pytest
 from app.backup import BackupError, create_backup, default_backup_name, prune_backups, read_manifest, restore_backup
 from app.db import SCHEMA_VERSION, connect
 from app.maintenance import PURGE_STATE_KEY, count_purgeable, purge_done
-from app.models import Attachment, Event, Task, TaskStatus
+from app.models import Attachment, Event, Deadline, DeadlineStatus
 from app.repository import Repository
 
 NOW = datetime(2026, 10, 14, 10, 0)
@@ -17,21 +17,21 @@ NOW = datetime(2026, 10, 14, 10, 0)
 
 # ------------------------------------------------------------------ Ngày hoàn thành
 def test_completed_at_set_kept_and_cleared(repo):
-    task = repo.add_task(Task("A", NOW))
+    task = repo.add_deadline(Deadline("A", NOW))
     assert task.completed_at is None
-    repo.set_task_status(task.id, TaskStatus.DONE, at=NOW)
-    assert repo.get_task(task.id).completed_at == NOW
+    repo.set_deadline_status(task.id, DeadlineStatus.DONE, at=NOW)
+    assert repo.get_deadline(task.id).completed_at == NOW
 
-    later = repo.get_task(task.id)
+    later = repo.get_deadline(task.id)
     later.title = "A (đổi tên)"
-    assert repo.update_task(later).completed_at == NOW         # sửa tên: giữ mốc hoàn thành
-    repo.set_task_status(task.id, TaskStatus.DONE, at=NOW + timedelta(days=3))
-    assert repo.get_task(task.id).completed_at == NOW         # đánh dấu xong lần nữa: vẫn giữ mốc cũ
+    assert repo.update_deadline(later).completed_at == NOW         # sửa tên: giữ mốc hoàn thành
+    repo.set_deadline_status(task.id, DeadlineStatus.DONE, at=NOW + timedelta(days=3))
+    assert repo.get_deadline(task.id).completed_at == NOW         # đánh dấu xong lần nữa: vẫn giữ mốc cũ
 
-    reopened = repo.get_task(task.id)
-    reopened.status = TaskStatus.IN_PROGRESS
-    assert repo.update_task(reopened).completed_at is None    # mở lại: xoá mốc
-    assert repo.add_task(Task("B", NOW, status=TaskStatus.DONE)).completed_at is not None
+    reopened = repo.get_deadline(task.id)
+    reopened.status = DeadlineStatus.IN_PROGRESS
+    assert repo.update_deadline(reopened).completed_at is None    # mở lại: xoá mốc
+    assert repo.add_deadline(Deadline("B", NOW, status=DeadlineStatus.DONE)).completed_at is not None
 
 
 def test_migration_v3_backfills_completed_at(tmp_path):
@@ -55,10 +55,10 @@ def test_migration_v3_backfills_completed_at(tmp_path):
 def done_tasks(repo):
     ids = {}
     for name, days_ago in (("cũ", 40), ("vừa", 10), ("mới", 1)):
-        task = repo.add_task(Task(name, NOW - timedelta(days=days_ago)))
-        repo.set_task_status(task.id, TaskStatus.DONE, at=NOW - timedelta(days=days_ago))
+        task = repo.add_deadline(Deadline(name, NOW - timedelta(days=days_ago)))
+        repo.set_deadline_status(task.id, DeadlineStatus.DONE, at=NOW - timedelta(days=days_ago))
         ids[name] = task.id
-    ids["chưa xong"] = repo.add_task(Task("chưa xong", NOW - timedelta(days=60))).id
+    ids["chưa xong"] = repo.add_deadline(Deadline("chưa xong", NOW - timedelta(days=60))).id
     ids["sự kiện"] = repo.add_event(Event("họp", NOW - timedelta(days=60), NOW - timedelta(days=60))).id
     return ids
 
@@ -82,7 +82,7 @@ def test_purge_runs_once_per_day_unless_forced(repo, done_tasks, tmp_path):
 
 def test_purge_disabled(repo, done_tasks, tmp_path):
     assert purge_done(repo, 0, NOW, attachments_dir=tmp_path, force=True) == 0
-    assert repo.count_items()["task"] == 4
+    assert repo.count_items()["deadline"] == 4
 
 
 def test_purge_cleans_attachment_copies_but_not_originals(repo, tmp_path):
@@ -91,8 +91,8 @@ def test_purge_cleans_attachment_copies_but_not_originals(repo, tmp_path):
     copy, original = copies / "bai.docx", tmp_path / "goc.docx"
     copy.write_text("x")
     original.write_text("y")
-    task = repo.add_task(Task("A", NOW, attachments=[Attachment(str(copy)), Attachment(str(original))]))
-    repo.set_task_status(task.id, TaskStatus.DONE, at=NOW - timedelta(days=40))
+    task = repo.add_deadline(Deadline("A", NOW, attachments=[Attachment(str(copy)), Attachment(str(original))]))
+    repo.set_deadline_status(task.id, DeadlineStatus.DONE, at=NOW - timedelta(days=40))
     purge_done(repo, 30, NOW, attachments_dir=copies)
     assert not copy.exists() and original.exists()
 
@@ -112,7 +112,7 @@ def data_dir(tmp_path):
 def test_backup_and_restore_roundtrip(tmp_path, data_dir):
     conn = connect(data_dir / "norilan.db")
     repo = Repository(conn)
-    repo.add_task(Task("Lab 2", NOW, subject="PPT", attachments=[Attachment(str(data_dir / "attachments" / "lab.docx"))]))
+    repo.add_deadline(Deadline("Lab 2", NOW, subject="PPT", attachments=[Attachment(str(data_dir / "attachments" / "lab.docx"))]))
     repo.set_subject_color("PPT", "purple")
     backup = create_backup(conn, tmp_path / "out" / default_backup_name(NOW), data_dir=data_dir, now=NOW)
     assert backup.name == "Norilan-saoluu-2026-10-14_1000.zip"
@@ -120,7 +120,7 @@ def test_backup_and_restore_roundtrip(tmp_path, data_dir):
     assert manifest["schema_version"] == SCHEMA_VERSION
 
     # Thay đổi sau khi sao lưu → khôi phục phải đưa về như cũ
-    repo.add_task(Task("Việc mới", NOW))
+    repo.add_deadline(Deadline("Việc mới", NOW))
     repo.delete_item(repo.search("Lab 2")[0].id)
     (data_dir / "attachments" / "lab.docx").unlink()
     (data_dir / "settings.json").write_text("{}", encoding="utf-8")
@@ -136,7 +136,7 @@ def test_backup_and_restore_roundtrip(tmp_path, data_dir):
 
 def test_restore_on_another_computer_rewrites_copy_paths(tmp_path, data_dir):
     conn = connect(data_dir / "norilan.db")
-    Repository(conn).add_task(Task("Lab", NOW, attachments=[
+    Repository(conn).add_deadline(Deadline("Lab", NOW, attachments=[
         Attachment(str(data_dir / "attachments" / "lab.docx")), Attachment("/home/ai/goc.pdf")]))
     backup = create_backup(conn, tmp_path / "b.zip", data_dir=data_dir, now=NOW)
 
@@ -169,7 +169,7 @@ def test_reject_non_backup_and_newer_backup(tmp_path):
 
 def test_restore_ignores_zip_slip_and_rejects_corrupt_db(tmp_path, data_dir):
     conn = connect(data_dir / "norilan.db")
-    Repository(conn).add_task(Task("Giữ nguyên", NOW))
+    Repository(conn).add_deadline(Deadline("Giữ nguyên", NOW))
     evil = tmp_path / "evil.zip"
     good_backup = create_backup(conn, tmp_path / "good.zip", data_dir=data_dir, now=NOW)
     with zipfile.ZipFile(good_backup) as src, zipfile.ZipFile(evil, "w") as dst:

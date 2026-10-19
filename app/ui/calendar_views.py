@@ -38,7 +38,7 @@ class DayCell(QFrame):
     """Một ô ngày: số ngày + tối đa `max_chips` chip, dư thì hiện '+N mục'."""
 
     day_clicked = Signal(object)          # date
-    day_double_clicked = Signal(object)   # date → tạo bài tập mới
+    day_double_clicked = Signal(object)   # date → tạo deadline mới
     item_clicked = Signal(int, object)    # item_id, date
     item_context = Signal(int, QPoint)    # chuột phải vào chip
 
@@ -257,7 +257,7 @@ class DayView(QWidget):
         rel = relative_label(selected, today)
         self._heading.setText(f"{rel} · {day_heading(selected)}" if rel else day_heading(selected))
         self._list.set_items(grouped.get(selected, []), now=now, today=today, colors=colors,
-                             empty_text=tr("dayview.empty", button=tr("toolbar.new_task")))
+                             empty_text=tr("dayview.empty", button=tr("toolbar.new_deadline")))
 
     def set_selected_item(self, item_id: int | None) -> None:
         self._list.set_selected(item_id)

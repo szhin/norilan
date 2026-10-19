@@ -8,7 +8,7 @@ import pytest
 pytest.importorskip("PySide6")
 from app.calendar_logic import ViewMode
 from app.files import FileService
-from app.models import Attachment, Event, Task, TaskStatus
+from app.models import Attachment, Event, Deadline, DeadlineStatus
 from app.settings import Settings
 from app.ui.main_window import MainWindow
 
@@ -24,13 +24,13 @@ def seeded(repo):
     ids = {}
     ids["meeting"] = repo.add_event(Event("Họp nhóm", datetime(2026, 10, 13, 19), datetime(2026, 10, 13, 20),
                                           location="Thư viện")).id
-    ids["lab"] = repo.add_task(Task("Lab 2", datetime(2026, 10, 14, 23, 59), subject="PPT",
+    ids["lab"] = repo.add_deadline(Deadline("Lab 2", datetime(2026, 10, 14, 23, 59), subject="PPT",
                                     attachments=[Attachment(r"C:\khong\ton\tai.docx")])).id
-    ids["late"] = repo.add_task(Task("Báo cáo trễ", datetime(2026, 10, 12, 17))).id
+    ids["late"] = repo.add_deadline(Deadline("Báo cáo trễ", datetime(2026, 10, 12, 17))).id
     for hour in range(8, 13):
-        repo.add_task(Task(f"Việc {hour}h", datetime(2026, 10, 15, hour)))
-    done = repo.add_task(Task("Đã xong", datetime(2026, 10, 9, 8)))
-    repo.set_task_status(done.id, TaskStatus.DONE)
+        repo.add_deadline(Deadline(f"Việc {hour}h", datetime(2026, 10, 15, hour)))
+    done = repo.add_deadline(Deadline("Đã xong", datetime(2026, 10, 9, 8)))
+    repo.set_deadline_status(done.id, DeadlineStatus.DONE)
     return ids
 
 
@@ -52,9 +52,9 @@ def test_opens_on_today_in_month_view(window):
 
 def test_month_cell_limits_chips_to_three(window):
     cell = window.month_view.cell_for(date(2026, 10, 15))
-    assert cell.chip_texts() == ["08:00 Việc 8h", "09:00 Việc 9h", "10:00 Việc 10h"]
+    assert cell.chip_texts() == ["⏳ 08:00 Việc 8h 📖0", "⏳ 09:00 Việc 9h 📖0", "⏳ 10:00 Việc 10h 📖0"]
     assert cell.more_text() == "+2 mục khác"
-    assert window.month_view.cell_for(date(2026, 10, 9)).chip_texts() == ["08:00 Đã xong"]
+    assert window.month_view.cell_for(date(2026, 10, 9)).chip_texts() == ["⏳ 08:00 Đã xong 📖0"]
 
 
 def test_sidebar_counts(window):
@@ -95,7 +95,7 @@ def test_click_chip_opens_task_detail(window, seeded):
     window.on_calendar_item(seeded["lab"], date(2026, 10, 14))
     assert window.panel.is_showing_detail()
     fields = window.panel.detail.field_values()
-    assert fields["Hạn nộp"] == "23:59 · Thứ Tư, 14/10/2026"
+    assert fields["Hạn nộp"] == "23:59 · Thứ Tư, 14/10/2026 · còn 1 ngày 8 giờ"
     assert fields["Môn học"] == "PPT"
     assert window.sidebar.buttons["tomorrow"].isChecked()
     window.panel.show_list_page()

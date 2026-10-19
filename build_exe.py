@@ -51,6 +51,7 @@ def pyinstaller_args(*, onefile: bool, icon: Path) -> list[str]:
         "--distpath", str(ROOT / "dist"),
         "--workpath", str(ROOT / "build" / "pyinstaller"),
         "--specpath", str(ROOT / "build"),
+        "--add-data", f"{ROOT / 'app' / 'assets'}{os.pathsep}app/assets",  # icon.png
         "--hidden-import", "PySide6.QtSvg",      # mũi tên/dấu ✓ trong giao diện là SVG
         "--hidden-import", "PySide6.QtNetwork",  # chỉ cho chạy một bản
     ]

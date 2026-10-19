@@ -51,7 +51,7 @@ class NavButton(QPushButton):
 
 class Sidebar(QFrame):
     nav_changed = Signal(str)
-    new_task_requested = Signal()
+    new_deadline_requested = Signal()
     settings_requested = Signal()
     search_changed = Signal(str)
 
@@ -86,11 +86,11 @@ class Sidebar(QFrame):
         layout.addWidget(self.search)
         layout.addSpacing(4)
 
-        new_task = QPushButton(tr("sidebar.new_task"), objectName="SidebarAction")
-        new_task.setCursor(Qt.CursorShape.PointingHandCursor)
-        new_task.setToolTip(tr("sidebar.new_task_tooltip"))
-        new_task.clicked.connect(self.new_task_requested)
-        layout.addWidget(new_task)
+        new_deadline = QPushButton(tr("sidebar.new_deadline"), objectName="SidebarAction")
+        new_deadline.setCursor(Qt.CursorShape.PointingHandCursor)
+        new_deadline.setToolTip(tr("sidebar.new_deadline_tooltip"))
+        new_deadline.clicked.connect(self.new_deadline_requested)
+        layout.addWidget(new_deadline)
         layout.addWidget(QLabel(tr("sidebar.section"), objectName="SidebarSection"))
 
         self._group = QButtonGroup(self)

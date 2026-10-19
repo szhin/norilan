@@ -10,9 +10,9 @@ from datetime import date, datetime, timedelta
 from typing import Callable
 
 from app import links
-from app.calendar_logic import day_month_text, format_minutes, relative_label
+from app.calendar_logic import day_month_text, format_minutes, relative_label, round_for_display
 from app.i18n import tr
-from app.models import CalendarItem, Event, Task
+from app.models import CalendarItem, Deadline, Event, StudyTime
 from app.repository import Repository
 from app.settings import Settings
 
@@ -30,34 +30,29 @@ class Notification:
     url: str      # mở khi bấm vào toast
 
 
-def _round_for_display(minutes: int) -> int:
-    """Làm tròn cho dễ đọc ('còn 3 giờ' thay vì 'còn 2 giờ 59 phút')."""
-    if minutes >= 1440:
-        return round(minutes / 60) * 60
-    if minutes >= 120:
-        return round(minutes / 15) * 15
-    if minutes >= 60:
-        return round(minutes / 5) * 5
-    return minutes
-
-
 def _remaining(start: datetime, now: datetime) -> str:
     minutes = round((start - now).total_seconds() / 60)
     if minutes == 0:
         return tr("remind.now")
     if minutes < 0:  # app mở lại muộn, sau cả giờ của mục (vẫn trong khoảng grace của due_reminders)
-        return tr("remind.elapsed", span=format_minutes(_round_for_display(-minutes)))
-    return tr("remind.left", span=format_minutes(_round_for_display(minutes)))
+        return tr("remind.elapsed", span=format_minutes(round_for_display(-minutes)))
+    return tr("remind.left", span=format_minutes(round_for_display(minutes)))
 
 
 def item_notification(item: CalendarItem, now: datetime) -> Notification:
     rel = relative_label(item.starts_at.date(), now.date())
     when_day = rel.lower() if rel else day_month_text(item.starts_at)
-    if isinstance(item, Task):
-        details = [tr("notify.task", time=f"{item.due_at:%H:%M}", day=when_day, remaining=_remaining(item.due_at, now))]
+    if isinstance(item, Deadline):
+        details = [tr("notify.deadline", time=f"{item.due_at:%H:%M}", day=when_day, remaining=_remaining(item.due_at, now))]
         if item.subject:
             details.append(item.subject)
         title = f"⏰ {item.title}"
+    elif isinstance(item, StudyTime):
+        details = [tr("notify.study", time=f"{item.starts_at:%H:%M}", day=when_day,
+                      remaining=_remaining(item.starts_at, now))]
+        if item.subject:
+            details.append(item.subject)
+        title = f"📖 {item.title}"
     else:
         assert isinstance(item, Event)
         details = [tr("notify.event", time=f"{item.starts_at:%H:%M}", day=when_day,
@@ -70,6 +65,16 @@ def item_notification(item: CalendarItem, now: datetime) -> Notification:
         title=title,
         body="\n".join(details),
         url=links.item_url(item.id),  # type: ignore[arg-type]
+    )
+
+
+def study_end_notification(study: StudyTime, now: datetime) -> Notification:
+    """Toast 'Chuẩn bị hết thời gian làm bài' – bấm vào mở đúng Study time đó."""
+    return Notification(
+        key=f"study-end-{study.id}-{study.ends_at:%Y%m%d%H%M}",   # mỗi Study time một khoá → không ghi đè nhau
+        title=tr("notify.study_end_title", title=study.title),
+        body=tr("notify.study_end_body", time=f"{study.ends_at:%H:%M}", remaining=_remaining(study.ends_at, now)),
+        url=links.item_url(study.id),  # type: ignore[arg-type]
     )
 
 
@@ -92,14 +97,19 @@ class ReminderService:
 
     def check(self, now: datetime) -> list[Notification]:
         """Gọi định kỳ. Trả về các thông báo cần hiện ngay; mỗi thông báo chỉ trả về một lần."""
-        notes = [self._item(item, now) for item in self._repo.due_reminders(now)]
+        notes = [self._item(item, now) for item in self._repo.due_reminders(now)
+                 if self._repo.claim_reminder(item.id, now)]  # type: ignore[arg-type]
+        # Cảnh báo sắp hết giờ của Study time: nằm trong cùng vòng nhắc này nên chạy cả khi chỉ còn app ở khay.
+        for study in self._repo.due_end_warnings(now):
+            if self._repo.claim_end_warning(study.id, now):  # type: ignore[arg-type]
+                log.info("End warning for study #%s", study.id)
+                notes.append(study_end_notification(study, now))
         digest = self._digest(now)
         if digest is not None:
             notes.append(digest)
         return notes
 
     def _item(self, item: CalendarItem, now: datetime) -> Notification:
-        self._repo.mark_reminder_sent(item.id, now)  # type: ignore[arg-type]
         log.info("Reminder for item #%s", item.id)
         return item_notification(item, now)
 

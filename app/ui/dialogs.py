@@ -1,4 +1,4 @@
-"""Dialog thêm/sửa Task và Event, kèm trình quản lý đính kèm (chọn file, kéo-thả, link)."""
+"""Dialog thêm/sửa Deadline, Study time và Event, kèm trình quản lý đính kèm (chọn file, kéo-thả, link)."""
 from __future__ import annotations
 
 import copy
@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from app import APP_NAME
-from app.calendar_logic import REMIND_UNITS, split_minutes
+from app.calendar_logic import REMIND_UNITS, day_month_text, split_minutes
 from app.colors import DEFAULT_EVENT_TONE, ColorResolver, pick_tone
 from app import paths
 from app.files import AttachmentMissingError, FileService, attachment_from_target, is_app_copy, is_missing
@@ -36,8 +36,9 @@ from app.models import (
     AttachmentKind,
     Event,
     Priority,
-    Task,
-    TaskStatus,
+    Deadline,
+    DeadlineStatus,
+    StudyTime,
     ValidationError,
 )
 from app.ui import prompts
@@ -324,93 +325,93 @@ class _ItemDialog(QDialog):
             return
         super().accept()
 
-    def result_item(self) -> Task | Event:  # pragma: no cover – lớp con cài đặt
+    def result_item(self) -> Deadline | Event | StudyTime:  # pragma: no cover – lớp con cài đặt
         raise NotImplementedError
 
 
-# ------------------------------------------------------------------ Task
-class TaskDialog(_ItemDialog):
+# ------------------------------------------------------------------ Deadline
+class DeadlineDialog(_ItemDialog):
     def __init__(
-        self, *, files: FileService, subjects: list[str], task: Task | None = None,
+        self, *, files: FileService, subjects: list[str], deadline: Deadline | None = None,
         default_due: datetime | None = None, copy_default: bool = False,
         subject_colors: dict[str, str] | None = None, parent: QWidget | None = None,
     ) -> None:
-        super().__init__(tr("task.window_edit" if task else "task.window_new"), parent)
-        self._original = task
+        super().__init__(tr("deadline.window_edit" if deadline else "deadline.window_new"), parent)
+        self._original = deadline
         self._subject_colors = dict(subject_colors or {})
         self._colors = ColorResolver("subject", self._subject_colors)
         self._new_subject_tone = pick_tone(self._subject_colors.values())  # màu sẽ gán nếu gõ môn mới
         self._picked_tones: dict[str, str] = {}  # môn → màu người dùng vừa chọn trong dialog này
         self.setAcceptDrops(True)
         self.resize(600, 680)
-        self.title_edit.setPlaceholderText(tr("task.placeholder"))
+        self.title_edit.setPlaceholderText(tr("deadline.placeholder"))
 
         self.due = DateTimeRow()
-        self.form.addRow(tr("task.due"), self.due)
+        self.form.addRow(tr("deadline.due"), self.due)
 
         status_priority = QHBoxLayout()
         self.status = QComboBox()
-        for status in TaskStatus:
+        for status in DeadlineStatus:
             self.status.addItem(status.label, status)
         self.priority = QComboBox()
         for priority in Priority:
             self.priority.addItem(priority.label, priority)
         status_priority.addWidget(self.status, 1)
         status_priority.addSpacing(14)
-        status_priority.addWidget(QLabel(tr("task.priority")))
+        status_priority.addWidget(QLabel(tr("deadline.priority")))
         status_priority.addWidget(self.priority, 1)
-        self.form.addRow(tr("task.status"), status_priority)
+        self.form.addRow(tr("deadline.status"), status_priority)
 
         self.subject = QComboBox()
         self.subject.setEditable(True)
         self.subject.addItems(subjects)
         self.subject.setCurrentText("")
-        self.subject.lineEdit().setPlaceholderText(tr("task.subject_placeholder"))
+        self.subject.lineEdit().setPlaceholderText(tr("deadline.subject_placeholder"))
         self.subject_tone = ToneButton()
-        self.subject_tone.setToolTip(tr("task.subject_color_tooltip"))
+        self.subject_tone.setToolTip(tr("deadline.subject_color_tooltip"))
         self.subject_tone.tone_changed.connect(self._on_tone_picked)
         self.subject.currentTextChanged.connect(self._sync_subject_tone)
         subject_row = QHBoxLayout()
         subject_row.setSpacing(6)
         subject_row.addWidget(self.subject, 1)
         subject_row.addWidget(self.subject_tone)
-        self.form.addRow(tr("task.subject"), subject_row)
+        self.form.addRow(tr("deadline.subject"), subject_row)
 
         self.reminder = ReminderEdit()
-        self.form.addRow(tr("task.remind"), self.reminder)
+        self.form.addRow(tr("deadline.remind"), self.reminder)
 
         self.notes = QPlainTextEdit()
-        self.notes.setPlaceholderText(tr("task.notes_placeholder"))
+        self.notes.setPlaceholderText(tr("deadline.notes_placeholder"))
         self.notes.setFixedHeight(80)
-        self.form.addRow(tr("task.notes"), self.notes)
+        self.form.addRow(tr("deadline.notes"), self.notes)
 
-        self._root.addWidget(QLabel(tr("task.attachments"), objectName="SectionLabel"))
+        self._root.addWidget(QLabel(tr("deadline.attachments"), objectName="SectionLabel"))
         self.attachments = AttachmentEditor(files)
         self._root.addWidget(self.attachments, 1)
-        self.copy_files = QCheckBox(tr("task.copy_files"))
-        self.copy_files.setToolTip(tr("task.copy_tooltip"))
+        self.copy_files = QCheckBox(tr("deadline.copy_files"))
+        self.copy_files.setToolTip(tr("deadline.copy_tooltip"))
         self.copy_files.setChecked(copy_default)
         self._root.addWidget(self.copy_files)
         self.priority.setCurrentIndex(self.priority.findData(Priority.NORMAL))
 
-        self._finish(tr("task.save_edit" if task else "task.save_new"))
-        if task is not None:
-            self._load(task)
+        self._finish(tr("deadline.save_edit" if deadline else "deadline.save_new"))
+        if deadline is not None:
+            self._load(deadline)
         else:
             self.due.set_value(default_due or datetime.combine(date.today() + timedelta(days=1), time(23, 59)))
         self._sync_subject_tone()
 
-    def _load(self, task: Task) -> None:
-        self.title_edit.setText(task.title)
-        self.due.set_value(task.due_at)
-        self.status.setCurrentIndex(self.status.findData(task.status))
-        self.priority.setCurrentIndex(self.priority.findData(task.priority))
-        self.subject.setCurrentText(task.subject)
-        self.reminder.set_value(task.remind_before_minutes)
-        self.notes.setPlainText(task.notes)
-        self.attachments.set_attachments(task.attachments)
+    def _load(self, deadline: Deadline) -> None:
+        self.title_edit.setText(deadline.title)
+        self.due.set_value(deadline.due_at)
+        self.status.setCurrentIndex(self.status.findData(deadline.status))
+        self.priority.setCurrentIndex(self.priority.findData(deadline.priority))
+        self.subject.setCurrentText(deadline.subject)
+        self.reminder.set_value(deadline.remind_before_minutes)
+        self.notes.setPlainText(deadline.notes)
+        self.attachments.set_attachments(deadline.attachments)
         # Bài tập đã có bản sao trong Norilan → giữ ô này được tích để file mới thêm cũng được sao chép.
-        if any(is_app_copy(a, paths.attachments_dir()) for a in task.attachments):
+        if any(is_app_copy(a, paths.attachments_dir()) for a in deadline.attachments):
             self.copy_files.setChecked(True)
         self.title_edit.deselect()
         self.title_edit.end(False)
@@ -438,9 +439,9 @@ class TaskDialog(_ItemDialog):
             return subject, self._tone_for(subject)
         return None
 
-    def result_item(self) -> Task:
+    def result_item(self) -> Deadline:
         original = self._original
-        return Task(
+        return Deadline(
             title=self.title_edit.text().strip(),
             due_at=self.due.value(),
             status=self.status.currentData(),
@@ -492,7 +493,7 @@ class EventDialog(_ItemDialog):
         color_row.addStretch(1)
         self.form.addRow(tr("event.color"), color_row)
         self.reminder = ReminderEdit()
-        self.form.addRow(tr("task.remind"), self.reminder)
+        self.form.addRow(tr("deadline.remind"), self.reminder)
         self.notes = QPlainTextEdit()
         self.notes.setPlaceholderText(tr("event.notes_placeholder"))
         self.notes.setFixedHeight(90)
@@ -536,5 +537,102 @@ class EventDialog(_ItemDialog):
             notes=self.notes.toPlainText().strip(),
             remind_before_minutes=self.reminder.value(),
             color=self.color.tone(),
+            id=original.id if original else None,
+        )
+
+
+# ------------------------------------------------------------------ Study time
+class StudyTimeDialog(_ItemDialog):
+    """Thêm/sửa Study time. Ô Deadline (tuỳ chọn) chỉ liệt kê các deadline chưa xong do người gọi truyền vào;
+    chọn deadline thì môn học được điền sẵn theo deadline đó (nếu người dùng chưa tự nhập môn khác)."""
+
+    def __init__(
+        self, *, subjects: list[str], deadlines: list[Deadline], study: StudyTime | None = None,
+        default_start: datetime | None = None, title: str = "", deadline_id: int | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(tr("study.window_edit" if study else "study.window_new"), parent)
+        self._original = study
+        self._deadlines = {d.id: d for d in deadlines}
+        self._auto_subject = ""   # môn do dialog tự điền theo deadline (để biết khi nào được phép ghi đè)
+        self._duration = timedelta(hours=1)
+        self.title_edit.setPlaceholderText(tr("study.placeholder"))
+
+        self.deadline = QComboBox()
+        self.deadline.setToolTip(tr("study.deadline_tooltip"))
+        self.deadline.addItem(tr("study.deadline_none"), None)
+        for d in deadlines:
+            self.deadline.addItem(f"{d.title}  ({day_month_text(d.due_at)} {d.due_at:%H:%M})", d.id)
+        self.form.addRow(tr("study.deadline"), self.deadline)
+
+        self.start = DateTimeRow()
+        self.end = DateTimeRow()
+        self.form.addRow(tr("study.start"), self.start)
+        self.form.addRow(tr("study.end"), self.end)
+
+        self.subject = QComboBox()
+        self.subject.setEditable(True)
+        self.subject.addItems(subjects)
+        self.subject.setCurrentText("")
+        self.subject.lineEdit().setPlaceholderText(tr("study.subject_placeholder"))
+        self.form.addRow(tr("study.subject"), self.subject)
+
+        self.notes = QPlainTextEdit()
+        self.notes.setPlaceholderText(tr("study.notes_placeholder"))
+        self.notes.setFixedHeight(90)
+        self.form.addRow(tr("study.notes"), self.notes)
+        self._finish(tr("study.save_edit" if study else "study.save_new"))
+        self.resize(540, self.sizeHint().height())
+
+        if study is not None:
+            self.title_edit.setText(study.title)
+            self.start.set_value(study.starts_at)
+            self.end.set_value(study.ends_at)
+            self._duration = study.ends_at - study.starts_at
+            self.subject.setCurrentText(study.subject)
+            self.notes.setPlainText(study.notes)
+            self._select_deadline(study.deadline_id)
+        else:
+            start = default_start or datetime.now().replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+            self.start.set_value(start)
+            self.end.set_value(start + self._duration)
+            self.title_edit.setText(title)  # sao chép một lần từ deadline, không đồng bộ về sau
+            self._select_deadline(deadline_id)
+            self._fill_subject_from_deadline()
+        self.deadline.currentIndexChanged.connect(lambda _: self._fill_subject_from_deadline())
+        self.start.changed.connect(self._on_start_changed)
+        self.end.changed.connect(self._on_end_changed)
+        self.title_edit.end(False)
+
+    def _select_deadline(self, deadline_id: int | None) -> None:
+        index = self.deadline.findData(deadline_id)
+        self.deadline.setCurrentIndex(max(index, 0))
+
+    def _fill_subject_from_deadline(self) -> None:
+        deadline = self._deadlines.get(self.deadline.currentData())
+        current = self.subject.currentText().strip()
+        if deadline is not None and deadline.subject and current in ("", self._auto_subject):
+            self.subject.setCurrentText(deadline.subject)
+            self._auto_subject = deadline.subject
+
+    def _on_start_changed(self) -> None:
+        self.end.blockSignals(True)
+        self.end.set_value(self.start.value() + self._duration)
+        self.end.blockSignals(False)
+
+    def _on_end_changed(self) -> None:
+        if self.end.value() > self.start.value():
+            self._duration = self.end.value() - self.start.value()
+
+    def result_item(self) -> StudyTime:
+        original = self._original
+        return StudyTime(
+            title=self.title_edit.text().strip(),
+            starts_at=self.start.value(),
+            ends_at=self.end.value(),
+            subject=self.subject.currentText().strip(),
+            notes=self.notes.toPlainText().strip(),
+            deadline_id=self.deadline.currentData(),
+            remind_before_minutes=original.remind_before_minutes if original else None,
             id=original.id if original else None,
         )

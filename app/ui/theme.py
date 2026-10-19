@@ -17,7 +17,8 @@ LIGHT: dict[str, str] = {
     "accent": "#2383e2", "accent_hover": "#1b6fc4", "accent_text": "#ffffff", "outside_bg": "#fbfbfa", "selected_cell": "#eef5fd",
     "task_bg": "#e3eefb", "task_fg": "#1d5a9c", "event_bg": "#fdecdc", "event_fg": "#94500f",
     "done_bg": "#f1f1ef", "done_fg": "#a5a29c", "overdue_bg": "#fde8e8", "overdue_fg": "#c4332b",
-    "badge_bg": "#e7e6e3", "danger": "#d44c47",
+    "badge_bg": "#e7e6e3", "danger": "#d44c47", "warn_bg": "#fff0d1", "warn_fg": "#a85a00",
+    "study_bg": "#e6f4ea", "study_fg": "#2f7a4a",
 }
 
 DARK: dict[str, str] = {
@@ -26,7 +27,8 @@ DARK: dict[str, str] = {
     "accent": "#2f8fed", "accent_hover": "#4a9ff0", "accent_text": "#ffffff", "outside_bg": "#1e1e1e", "selected_cell": "#1d2a3a",
     "task_bg": "#1f3550", "task_fg": "#9cc7f5", "event_bg": "#46301c", "event_fg": "#f2bf8c",
     "done_bg": "#262626", "done_fg": "#6f6e69", "overdue_bg": "#4a2323", "overdue_fg": "#ff9b94",
-    "badge_bg": "#333333", "danger": "#ff7b72",
+    "badge_bg": "#333333", "danger": "#ff7b72", "warn_bg": "#4d3a14", "warn_fg": "#f3c05a",
+    "study_bg": "#1f3d2b", "study_fg": "#7fd1a0",
 }
 
 THEMES = {"light": LIGHT, "dark": DARK}
@@ -89,6 +91,9 @@ QPushButton#CellAdd:hover { background: $hover; color: $text; }
 $tone_rules
 #Chip[state="high"] { font-weight: 700; }
 #Chip[state="overdue"] { background: $overdue_bg; color: $overdue_fg; }
+#Chip[state="soon"] { background: $warn_bg; color: $warn_fg; font-weight: 700; }
+#Chip[kind="deadline"] { font-weight: 600; }
+#Chip[kind="deadline"][zero="true"] { border: 1px dashed $warn_fg; }
 #Chip[state="done"] { background: $done_bg; color: $done_fg; }
 #MoreLabel { color: $text_muted; font-size: 11px; font-weight: 600; padding: 0px 6px; }
 #MoreLabel:hover { color: $accent; }
@@ -104,11 +109,16 @@ $tone_rules
 #ItemCard[selected="true"] { border: 1px solid $accent; background: $selected_cell; }
 #KindBar { border-radius: 2px; }
 #KindBar[state="overdue"] { background: $overdue_fg; }
+#KindBar[state="soon"] { background: $warn_fg; }
 #KindBar[state="done"] { background: $done_fg; }
 #CardTitle { font-weight: 600; }
 #CardTitle[state="done"] { color: $done_fg; }
 #CardMeta { color: $text_muted; font-size: 12px; }
 #CardMeta[state="overdue"] { color: $overdue_fg; }
+#CardMeta[state="soon"] { color: $warn_fg; font-weight: 600; }
+#KindIcon { background: transparent; font-size: 13px; }
+#StudyBadge { background: $badge_bg; color: $text_muted; border-radius: 8px; padding: 0px 6px; font-size: 11px; }
+#StudyBadge[zero="true"] { background: $warn_bg; color: $warn_fg; font-weight: 700; }
 #EmptyState { color: $text_faint; padding: 28px 8px; }
 
 /* ---- Chi tiết ---- */
@@ -116,10 +126,40 @@ QPushButton#LinkButton { background: transparent; border: none; color: $text_mut
 QPushButton#LinkButton:hover { color: $accent; }
 #DetailTitle { font-size: 19px; font-weight: 700; }
 #KindPill { border-radius: 9px; padding: 1px 8px; font-size: 11px; font-weight: 600; }
-#KindPill[kind="task"] { background: $task_bg; color: $task_fg; }
+#KindPill[kind="deadline"] { background: $task_bg; color: $task_fg; }
 #KindPill[kind="event"] { background: $event_bg; color: $event_fg; }
+#KindPill[kind="study"] { background: $study_bg; color: $study_fg; }
 #FieldLabel { color: $text_muted; }
 #FieldValue[state="overdue"] { color: $overdue_fg; font-weight: 600; }
+#FieldValue[state="soon"] { color: $warn_fg; font-weight: 600; }
+#StudyLink { background: $outside_bg; border: 1px solid $border; border-radius: 6px; text-align: left; padding: 4px 8px; }
+#StudyLink:hover { border-color: $accent; }
+#LinkedCard { background: $outside_bg; border: 1px solid $border; border-radius: 8px; }
+#LinkedCard:hover { border-color: $accent; }
+#StudyEmpty { color: $text_faint; }
+
+/* ---- Đếm ngược Study time ---- */
+#CountdownTimer { background: $outside_bg; border: 1px solid $border; border-radius: 8px; }
+#CountdownTimer:hover { border-color: $accent; }
+#CountdownText { font-size: 18px; font-weight: 700; background: transparent; }
+#CountdownText[phase="upcoming"] { color: $text_muted; font-size: 14px; font-weight: 600; }
+#CountdownText[phase="ended"] { color: $text_faint; font-size: 14px; font-weight: 600; }
+#CountdownText[warn="true"] { color: $warn_fg; }
+#OverlayCard { background: $bg; border: 1px solid $border; border-radius: 16px; }
+#OverlayCaption { color: $text_muted; font-size: 15px; font-weight: 600; background: transparent; }
+#OverlayDigits { font-size: 104px; font-weight: 700; background: transparent; }
+#OverlayDigits[phase="upcoming"] { color: $text_muted; }
+#OverlayDigits[phase="ended"] { color: $text_faint; font-size: 56px; }
+#OverlayDigits[warn="true"] { color: $warn_fg; }
+#OverlayTitle { font-size: 22px; font-weight: 700; background: transparent; }
+#OverlayRange, #OverlayDeadline { color: $text_muted; font-size: 14px; background: transparent; }
+QProgressBar#OverlayProgress { background: $border; border: none; border-radius: 3px; min-height: 6px; max-height: 6px; }
+QProgressBar#OverlayProgress::chunk { background: $accent; border-radius: 3px; }
+QProgressBar#OverlayProgress[warn="true"]::chunk { background: $warn_fg; }
+QPushButton#OverlayClose { border: none; background: transparent; font-size: 16px; padding: 2px 10px; color: $text_muted; }
+QPushButton#OverlayClose:hover { background: $hover; color: $text; }
+QPushButton#AddStudyButton { border-style: dashed; color: $text_muted; }
+QPushButton#AddStudyButton:hover { color: $accent; border-color: $accent; }
 #Attachment { background: $outside_bg; border: 1px solid $border; border-radius: 6px; }
 #Attachment[missing="true"] { color: $danger; border-color: $danger; }
 
@@ -251,6 +291,11 @@ def system_is_dark() -> bool:
         return False
 
 
+def is_dark() -> bool:
+    """Theme đang áp dụng là tối? (sau apply_theme)"""
+    return bool(_current["dark"])
+
+
 def resolve_dark(theme: str) -> bool:
     return system_is_dark() if theme == "system" else theme == "dark"
 
@@ -301,6 +346,7 @@ def _tone_rules(dark: bool) -> str:
     for tone, (bg, fg) in (DARK_TONES if dark else LIGHT_TONES).items():
         rules.append(f'#Chip[tone="{tone}"], #Pill[tone="{tone}"] {{ background: {bg}; color: {fg}; }}')
         rules.append(f'#KindBar[tone="{tone}"] {{ background: {fg}; }}')
+        rules.append(f'#Chip[kind="deadline"][tone="{tone}"] {{ border: 1px solid {fg}; }}')  # viền riêng của Deadline
     return "\n".join(rules)
 
 
@@ -339,7 +385,7 @@ def apply_theme(
 
 
 # Trạng thái có màu riêng trong QSS chung (đè lên tone): chip/thanh của việc đã xong hoặc quá hạn.
-STATE_OWNS_COLOR = ("done", "overdue")
+STATE_OWNS_COLOR = ("done", "overdue", "soon")
 
 
 def gradient_qss(tone: str, *, vertical: bool = False) -> str:

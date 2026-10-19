@@ -21,7 +21,7 @@ from app.calendar_logic import (
     visible_days,
     week_dates,
 )
-from app.models import Attachment, Event, Priority, Task, TaskStatus
+from app.models import Attachment, Event, Priority, Deadline, DeadlineStatus
 
 NOW = datetime(2026, 10, 13, 16, 0)
 
@@ -90,7 +90,7 @@ def test_items_by_day_spreads_multi_day_events():
     overnight = Event("Qua đêm", datetime(2026, 10, 13, 22), datetime(2026, 10, 14, 2))
     until_midnight = Event("Đến 0h", datetime(2026, 10, 14, 20), datetime(2026, 10, 15, 0))
     started_before = Event("Trại hè", datetime(2026, 10, 10, 8), datetime(2026, 10, 12, 18))
-    task = Task("T", datetime(2026, 10, 13, 9))
+    task = Deadline("T", datetime(2026, 10, 13, 9))
     grouped = items_by_day([started_before, task, overnight, until_midnight], days)
     assert grouped[date(2026, 10, 12)] == [started_before]
     assert grouped[date(2026, 10, 13)] == [task, overnight]
@@ -99,7 +99,7 @@ def test_items_by_day_spreads_multi_day_events():
 
 
 def test_split_overflow():
-    items = [Task(str(i), NOW) for i in range(5)]
+    items = [Deadline(str(i), NOW) for i in range(5)]
     visible, hidden = split_overflow(items, 3)
     assert len(visible) == 3 and hidden == 2
     assert split_overflow(items[:2], 3) == (items[:2], 0)
@@ -110,18 +110,21 @@ def test_chip_text_and_state():
     ev = Event("Họp", datetime(2026, 10, 13, 23), datetime(2026, 10, 14, 1))
     assert chip_text(ev, date(2026, 10, 13)) == "23:00 Họp"
     assert chip_text(ev, date(2026, 10, 14)) == "↳ Họp"
-    assert chip_state(Task("a", NOW - timedelta(hours=1)), NOW) == "overdue"
-    assert chip_state(Task("a", NOW - timedelta(hours=1), status=TaskStatus.DONE), NOW) == "done"
-    assert chip_state(Task("a", NOW + timedelta(hours=1), priority=Priority.HIGH), NOW) == "high"
+    assert chip_state(Deadline("a", NOW - timedelta(hours=1)), NOW) == "overdue"
+    assert chip_state(Deadline("a", NOW - timedelta(hours=1), status=DeadlineStatus.DONE), NOW) == "done"
+    assert chip_state(Deadline("a", NOW + timedelta(hours=1), priority=Priority.HIGH), NOW) == "soon"  # <24h thắng 'high'
+    assert chip_state(Deadline("a", NOW + timedelta(hours=30), priority=Priority.HIGH), NOW) == "high"
+    assert chip_state(Deadline("a", NOW + timedelta(hours=30)), NOW) == "normal"
+    assert chip_state(Deadline("a", NOW + timedelta(hours=1), status=DeadlineStatus.DONE), NOW) == "done"
     assert chip_state(ev, NOW) == "normal"
 
 
 def test_time_text_and_meta():
-    task = Task("Lab", datetime(2026, 10, 14, 23, 59), subject="PPT", attachments=[Attachment(r"C:\a.docx")])
+    task = Deadline("Lab", datetime(2026, 10, 14, 23, 59), subject="PPT", attachments=[Attachment(r"C:\a.docx")])
     assert time_text(task) == "Hạn 23:59"
-    assert item_meta(task, NOW) == "Hạn 23:59 · PPT · Chưa làm · 📎1"
-    late = Task("Trễ", datetime(2026, 10, 12, 17))
-    assert item_meta(late, NOW).endswith("Quá hạn")
+    assert item_meta(task, NOW) == "Hạn 23:59 · PPT · Chưa làm · còn 1 ngày 8 giờ · 📎1"
+    late = Deadline("Trễ", datetime(2026, 10, 12, 17))
+    assert item_meta(late, NOW) == "Hạn 17:00 · quá hạn 23 giờ"
     ev = Event("Họp", datetime(2026, 10, 13, 19), datetime(2026, 10, 13, 20, 30), location="Thư viện")
     assert item_meta(ev, NOW) == "19:00 – 20:30 · 📍 Thư viện"
     long_ev = Event("Trại", datetime(2026, 10, 13, 23), datetime(2026, 10, 14, 1))

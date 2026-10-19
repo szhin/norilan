@@ -7,7 +7,7 @@ from datetime import date, datetime, time, timedelta
 from typing import Callable
 
 from PySide6.QtCore import QPoint, Qt, QTimer, Signal
-from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
+from PySide6.QtGui import QCloseEvent, QHideEvent, QKeySequence, QShowEvent, QShortcut
 from PySide6.QtWidgets import (
     QButtonGroup,
     QDialog,
@@ -43,14 +43,15 @@ from app.files import (
     prepare_attachments,
     remove_orphan_copies,
 )
-from app.models import Attachment, Event, Task, TaskStatus
+from app.models import Attachment, Deadline, DeadlineStatus, Event, StudyTime
 from app.repository import Repository
 from app.settings import Settings
 from app.timeutil import day_range, now as local_now
 from app.ui import prompts
 from app.ui.background import BackgroundWidget
 from app.ui.calendar_views import DayView, MonthView, WeekView
-from app.ui.dialogs import EventDialog, TaskDialog
+from app.ui.dialogs import DeadlineDialog, EventDialog, StudyTimeDialog
+from app.ui.overlay import StudyOverlay
 from app.ui.side_panel import SidePanel
 from app.ui.sidebar import Sidebar
 
@@ -58,6 +59,7 @@ log = logging.getLogger(__name__)
 
 TICK_MS = 30_000  # cập nhật 'hôm nay' và số quá hạn
 SEARCH_DELAY_MS = 220  # chờ ngừng gõ rồi mới tìm
+COUNTDOWN_TICK_MS = 1000  # đồng hồ đếm ngược Study time
 LIST_NAVS = ("upcoming", "overdue", "search")  # panel phải là danh sách, không phải một ngày
 
 
@@ -97,11 +99,16 @@ class MainWindow(QMainWindow):
         self.hide_on_close = False   # bật bởi AppController khi có khay hệ thống
         self._quitting = False
         self._search_text = ""
-        self._search_status: TaskStatus | None = None
+        self._search_status: DeadlineStatus | None = None
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
         self._search_timer.setInterval(SEARCH_DELAY_MS)
         self._search_timer.timeout.connect(self.run_search)
+
+        # Một QTimer 1 giây dùng chung cho đồng hồ nhỏ và overlay; chỉ chạy khi một trong hai đang hiện.
+        self._second_timer = QTimer(self)
+        self._second_timer.setInterval(COUNTDOWN_TICK_MS)
+        self._second_timer.timeout.connect(self._on_second)
 
         self.setWindowTitle(APP_NAME)
         self.resize(1320, 820)
@@ -123,7 +130,7 @@ class MainWindow(QMainWindow):
 
         self.sidebar = Sidebar()
         self.sidebar.nav_changed.connect(self.on_nav)
-        self.sidebar.new_task_requested.connect(lambda: self.new_task())
+        self.sidebar.new_deadline_requested.connect(lambda: self.new_deadline())
         self.sidebar.settings_requested.connect(self.settings_requested)
         self.sidebar.search_changed.connect(self._on_search_typed)
         root.addWidget(self.sidebar)
@@ -145,19 +152,23 @@ class MainWindow(QMainWindow):
             view.item_context.connect(self.show_item_menu)
         for grid in (self.month_view, self.week_view):
             grid.day_clicked.connect(self.on_day_clicked)
-            grid.day_double_clicked.connect(self.new_task)
+            grid.day_double_clicked.connect(self.new_deadline)
         cv.addWidget(self._stack, 1)
 
         self.panel = SidePanel()
         self.panel.item_clicked.connect(self.activate_item)
         self.panel.item_context.connect(self.show_item_menu)
         self.panel.status_filter_changed.connect(self._on_status_filter)
+        self.panel.page_changed.connect(self._sync_countdown_timer)
         detail = self.panel.detail
         detail.edit_requested.connect(self.edit_item)
         detail.delete_requested.connect(self.delete_item)
         detail.status_requested.connect(self.set_status)
         detail.open_attachment_requested.connect(self.open_attachment_by_id)
         detail.reveal_attachment_requested.connect(self.reveal_attachment_by_id)
+        detail.add_study_requested.connect(self.add_study_for_deadline)
+        detail.open_item_requested.connect(self.open_item)
+        detail.countdown_clicked.connect(self.open_overlay)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setHandleWidth(1)
@@ -169,6 +180,9 @@ class MainWindow(QMainWindow):
         splitter.setSizes([960, 330])
         root.addWidget(splitter, 1)
         self.setCentralWidget(central)
+        # Overlay đếm ngược: con của central (phủ kín cửa sổ), dựng lại cùng giao diện khi đổi ngôn ngữ.
+        self.overlay = StudyOverlay(central)
+        self.overlay.closed.connect(self._sync_countdown_timer)
 
     def _build_toolbar(self) -> QWidget:
         bar = QFrame(objectName="Toolbar")
@@ -197,13 +211,16 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.period_label)
         layout.addStretch(1)
 
-        new_task = QPushButton(tr("toolbar.new_task"), objectName="PrimaryButton")
-        new_task.setToolTip(tr("toolbar.new_task_tooltip"))
-        new_task.clicked.connect(lambda: self.new_task())
+        new_deadline = QPushButton(tr("toolbar.new_deadline"), objectName="PrimaryButton")
+        new_deadline.setToolTip(tr("toolbar.new_deadline_tooltip"))
+        new_deadline.clicked.connect(lambda: self.new_deadline())
+        new_study = QPushButton(tr("toolbar.new_study"))
+        new_study.setToolTip(tr("toolbar.new_study_tooltip"))
+        new_study.clicked.connect(lambda: self.new_study_time())
         new_event = QPushButton(tr("toolbar.new_event"))
         new_event.setToolTip(tr("toolbar.new_event_tooltip"))
         new_event.clicked.connect(lambda: self.new_event())
-        for btn in (new_task, new_event):
+        for btn in (new_deadline, new_study, new_event):
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             layout.addWidget(btn)
         layout.addSpacing(12)
@@ -237,9 +254,10 @@ class MainWindow(QMainWindow):
             ("Ctrl+2", lambda: self.set_view(ViewMode.WEEK)),
             ("Ctrl+3", lambda: self.set_view(ViewMode.DAY)),
             # panel/sidebar được dựng lại khi đổi ngôn ngữ → luôn gọi qua self, không giữ hàm của widget cũ
-            ("Esc", lambda: self.panel.show_list_page()),
+            ("Esc", self._on_escape),
             ("F5", self.refresh),
-            ("Ctrl+N", lambda: self.new_task()),
+            ("Ctrl+N", lambda: self.new_deadline()),
+            ("Ctrl+Alt+N", lambda: self.new_study_time()),
             ("Ctrl+Shift+N", lambda: self.new_event()),
             ("Ctrl+E", lambda: self._on_detail(self.edit_item)),
             ("Delete", lambda: self._on_detail(self.delete_item)),
@@ -247,7 +265,20 @@ class MainWindow(QMainWindow):
             ("Ctrl+F", lambda: self.sidebar.focus_search()),
         ]
         for keys, handler in bindings:
+            if keys != "Esc":
+                handler = self._unless_overlay(handler)
             QShortcut(QKeySequence(keys), self).activated.connect(handler)
+
+    def _unless_overlay(self, handler: Callable[[], None]) -> Callable[[], None]:
+        """Overlay mở thì chặn phím tắt của giao diện bên dưới (chỉ Esc còn tác dụng, để đóng overlay)."""
+        return lambda: None if self._overlay_open() else handler()
+
+    def _on_escape(self) -> None:
+        # Một handler duy nhất cho Esc (không đăng ký hai shortcut trùng phím – Qt sẽ coi là mơ hồ và bỏ cả hai).
+        if self._overlay_open():
+            self.overlay.close_overlay()
+        else:
+            self.panel.show_list_page()
 
     # ------------------------------------------------------------------ Điều hướng
     @property
@@ -316,7 +347,9 @@ class MainWindow(QMainWindow):
             else:
                 self._nav = self._nav_for_day(day)
                 self.refresh()
-        self.panel.show_detail(item, self._clock(), self._colors)
+        linked = self._repo.get_deadline(item.deadline_id) if isinstance(item, StudyTime) and item.deadline_id else None
+        studies = self._repo.study_times_for(item.id) if isinstance(item, Deadline) else None
+        self.panel.show_detail(item, self._clock(), self._colors, linked_deadline=linked, study_times=studies)
         self.day_view.set_selected_item(item_id)
 
     def bring_to_front(self) -> None:
@@ -357,7 +390,7 @@ class MainWindow(QMainWindow):
         self._search_text = text
         self._search_timer.start()
 
-    def _on_status_filter(self, status: TaskStatus | None) -> None:
+    def _on_status_filter(self, status: DeadlineStatus | None) -> None:
         self._search_status = status
         self.run_search()
 
@@ -402,6 +435,73 @@ class MainWindow(QMainWindow):
         if detail_id is not None and self._repo.get_item(detail_id) is not None:
             self.open_item(detail_id)
 
+    # ------------------------------------------------------------------ Đếm ngược Study time
+    def _overlay_open(self) -> bool:
+        return self.overlay.is_open()
+
+    @guarded
+    def open_overlay(self, study_id: int) -> None:
+        """Phóng to đồng hồ của một Study time (chỉ từ click của người dùng, không bao giờ tự mở)."""
+        study = self._repo.get_study_time(study_id)
+        if study is None:
+            self.refresh()
+            return
+        deadline = self._repo.get_deadline(study.deadline_id) if study.deadline_id else None
+        self.overlay.show_for(study, deadline, self._clock())
+        self._sync_countdown_timer()
+
+    def _refresh_overlay(self) -> None:
+        """Dữ liệu vừa đổi (sửa/xoá): nạp lại overlay đang mở, hoặc đóng nếu Study time không còn."""
+        if not self._overlay_open():
+            return
+        study = self._repo.get_study_time(self.overlay.study_id)  # type: ignore[arg-type]
+        if study is None:
+            self.overlay.close_overlay()
+            return
+        deadline = self._repo.get_deadline(study.deadline_id) if study.deadline_id else None
+        self.overlay.show_for(study, deadline, self._clock())
+
+    def _countdown_visible(self) -> bool:
+        """Có thứ gì đang hiện cần đồng hồ chạy không? (đồng hồ nhỏ trong panel hoặc overlay)"""
+        if not self.isVisible():
+            return False
+        # Không dựa vào isVisible() của widget con: widget vừa thêm chỉ "visible" sau lượt layout kế tiếp.
+        # Đồng hồ nhỏ chỉ tồn tại ở trang chi tiết của Study time, nên có widget + đang ở trang chi tiết là đủ.
+        small = self.panel.is_showing_detail() and self.panel.detail.countdown_widget is not None
+        return small or self._overlay_open()
+
+    def _sync_countdown_timer(self) -> None:
+        if self._countdown_visible():
+            if not self._second_timer.isActive():
+                self._second_timer.start()
+            self._update_countdowns()
+        else:
+            self._second_timer.stop()
+
+    def _update_countdowns(self) -> None:
+        """Tính lại từ giờ hệ thống (không bao giờ giảm một biến đếm)."""
+        now = self._clock()
+        self.panel.detail.update_countdown(now)
+        if self._overlay_open():
+            self.overlay.update_state(now)
+
+    def _on_second(self) -> None:
+        try:
+            if self._countdown_visible():
+                self._update_countdowns()
+            else:
+                self._second_timer.stop()
+        except Exception:
+            log.exception("Lỗi khi cập nhật đồng hồ đếm ngược")
+
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        QTimer.singleShot(0, self._sync_countdown_timer)  # con của cửa sổ chỉ "visible" sau showEvent
+
+    def hideEvent(self, event: QHideEvent) -> None:
+        super().hideEvent(event)
+        self._second_timer.stop()   # ẩn xuống khay: không tick nữa
+
     # ------------------------------------------------------------------ Đóng cửa sổ
     def quit_app(self) -> None:
         """Đóng thật (menu Thoát) – không ẩn xuống khay nữa."""
@@ -425,16 +525,51 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ Thêm / sửa / xoá
     @guarded
-    def new_task(self, day: date | None = None) -> None:
+    def new_deadline(self, day: date | None = None) -> None:
         due = datetime.combine(day or self._selected, time(23, 59))
-        dialog = TaskDialog(files=self._files, subjects=self._repo.subjects(), default_due=due,
+        dialog = DeadlineDialog(files=self._files, subjects=self._repo.subjects(), default_due=due,
                             copy_default=self._settings.copy_attachments_to_app_dir,
                             subject_colors=self._repo.subject_colors(), parent=self)
         if self._exec_dialog(dialog):
-            task = dialog.result_item()
-            self._copy_files(task, dialog.copy_files.isChecked())
+            deadline = dialog.result_item()
+            self._copy_files(deadline, dialog.copy_files.isChecked())
             self._save_subject_color(dialog)
-            self._after_save(self._repo.add_task(task))
+            saved = self._repo.add_deadline(deadline)
+            self._after_save(saved)
+            if prompts.ask_study_after_deadline(self):
+                self.add_study_for_deadline(saved.id)  # type: ignore[arg-type]
+
+    @guarded
+    def add_study_for_deadline(self, deadline_id: int) -> None:
+        """Mở hộp thoại Study time điền sẵn tiêu đề (sao chép một lần) và liên kết với deadline này."""
+        deadline = self._repo.get_deadline(deadline_id)
+        if deadline is None:
+            self.refresh()
+            return
+        self.new_study_time(title=deadline.title, deadline_id=deadline_id)
+
+    @guarded
+    def new_study_time(
+        self, day: date | None = None, *, title: str = "", deadline_id: int | None = None,
+    ) -> None:
+        day = day or self._clock().date()
+        now = self._clock()
+        if day == now.date():
+            start = now.replace(minute=0, second=0) + timedelta(hours=1)
+        else:
+            start = datetime.combine(day, time(9, 0))
+        dialog = StudyTimeDialog(subjects=self._repo.subjects(), deadlines=self._deadline_choices(deadline_id),
+                                 default_start=start, title=title, deadline_id=deadline_id, parent=self)
+        if self._exec_dialog(dialog):
+            self._after_save(self._repo.add_study_time(dialog.result_item()))
+
+    def _deadline_choices(self, keep_id: int | None = None) -> list[Deadline]:
+        """Deadline chưa xong cho ô chọn; giữ thêm `keep_id` (deadline đang liên kết) kể cả khi nó đã xong."""
+        choices = self._repo.open_deadlines()
+        if keep_id is not None and all(d.id != keep_id for d in choices):
+            if (kept := self._repo.get_deadline(keep_id)) is not None:
+                choices.append(kept)
+        return choices
 
     @guarded
     def new_event(self, day: date | None = None) -> None:
@@ -454,16 +589,21 @@ class MainWindow(QMainWindow):
         if item is None:
             self.refresh()
             return
-        if isinstance(item, Task):
-            dialog = TaskDialog(files=self._files, subjects=self._repo.subjects(), task=item,
+        if isinstance(item, Deadline):
+            dialog = DeadlineDialog(files=self._files, subjects=self._repo.subjects(), deadline=item,
                                 copy_default=self._settings.copy_attachments_to_app_dir,
                                 subject_colors=self._repo.subject_colors(), parent=self)
             if self._exec_dialog(dialog):
-                task = dialog.result_item()
-                self._copy_files(task, dialog.copy_files.isChecked())
+                deadline = dialog.result_item()
+                self._copy_files(deadline, dialog.copy_files.isChecked())
                 self._save_subject_color(dialog)
-                self._after_save(self._repo.update_task(task))
+                self._after_save(self._repo.update_deadline(deadline))
                 self._cleanup_copies()  # bản sao của đính kèm vừa gỡ
+        elif isinstance(item, StudyTime):
+            dialog = StudyTimeDialog(subjects=self._repo.subjects(), study=item,
+                                     deadlines=self._deadline_choices(item.deadline_id), parent=self)
+            if self._exec_dialog(dialog):
+                self._after_save(self._repo.update_study_time(dialog.result_item()))
         else:
             dialog = EventDialog(event=item, parent=self)
             if self._exec_dialog(dialog):
@@ -474,27 +614,38 @@ class MainWindow(QMainWindow):
         item = self._repo.get_item(item_id)
         if item is None:
             return
-        what = "task" if isinstance(item, Task) else "event"
-        extra = ""
-        if isinstance(item, Task) and item.attachments:
-            extra = "\n\n" + tr("delete.extra_originals")
-            if any(is_app_copy(a, paths.attachments_dir()) for a in item.attachments):
-                extra += " " + tr("delete.extra_copies")
-        if prompts.confirm(self, tr(f"delete.{what}_title"), tr(f"delete.{what}_text", title=item.title, extra=extra)):
-            self._repo.delete_item(item_id)
-            log.info("Deleted item #%d", item_id)
-            self._cleanup_copies()
-            self.refresh()
+        study_mode = "unlink"
+        if isinstance(item, Deadline) and item.study_count:
+            # Hỏi về các Study time liên kết thay cho hộp xác nhận thường: Xoá luôn / Giữ lại / Huỷ.
+            study_mode = prompts.ask_delete_deadline_links(self, item.title, item.study_count)
+            if study_mode == "cancel":
+                return
+        else:
+            extra = ""
+            if isinstance(item, Deadline) and item.attachments:
+                extra = "\n\n" + tr("delete.extra_originals")
+                if any(is_app_copy(a, paths.attachments_dir()) for a in item.attachments):
+                    extra += " " + tr("delete.extra_copies")
+            what = item.KIND if isinstance(item, (Deadline, StudyTime)) else "event"
+            if not prompts.confirm(self, tr(f"delete.{what}_title"), tr(f"delete.{what}_text", title=item.title, extra=extra)):
+                return
+        if isinstance(item, Deadline):
+            self._repo.delete_deadline(item_id, study_times=study_mode)
+        else:
+            self._repo.delete_item(item_id)  # xoá Study time không ảnh hưởng Deadline
+        log.info("Deleted item #%d", item_id)
+        self._cleanup_copies()
+        self.refresh()
 
     @guarded
-    def set_status(self, item_id: int, status: TaskStatus) -> None:
-        task = self._repo.get_task(item_id)
-        if task is None or task.status == status:
+    def set_status(self, item_id: int, status: DeadlineStatus) -> None:
+        deadline = self._repo.get_deadline(item_id)
+        if deadline is None or deadline.status == status:
             return
-        self._repo.set_task_status(item_id, status)
+        self._repo.set_deadline_status(item_id, status)
         self._refresh_keep_detail()
 
-    def _after_save(self, item: Task | Event) -> None:
+    def _after_save(self, item: Deadline | Event | StudyTime) -> None:
         """Sau khi lưu: nhảy tới ngày của mục và mở chi tiết của nó."""
         self._selected = item.starts_at.date()
         if self._nav not in LIST_NAVS:
@@ -502,12 +653,12 @@ class MainWindow(QMainWindow):
         self.refresh()
         self.open_item(item.id)  # type: ignore[arg-type]
 
-    def _save_subject_color(self, dialog: TaskDialog) -> None:
+    def _save_subject_color(self, dialog: DeadlineDialog) -> None:
         if (choice := dialog.subject_color_choice()) is not None:
             self._repo.set_subject_color(*choice)
 
-    def _copy_files(self, task: Task, copy_files: bool) -> None:
-        errors = prepare_attachments(task.attachments, copy_files=copy_files, dest_dir=paths.attachments_dir())
+    def _copy_files(self, deadline: Deadline, copy_files: bool) -> None:
+        errors = prepare_attachments(deadline.attachments, copy_files=copy_files, dest_dir=paths.attachments_dir())
         if errors:
             prompts.show_error(self, tr("files.copy_failed"), "\n".join(errors))
 
@@ -583,15 +734,15 @@ class MainWindow(QMainWindow):
             return None
         menu = QMenu(self)
         menu.addAction(tr("menu.details"), lambda: self.open_item(item_id))
-        if isinstance(item, Task) and len(item.file_attachments) == 1:
+        if isinstance(item, Deadline) and len(item.file_attachments) == 1:
             att = item.file_attachments[0]
             menu.addAction(tr("menu.open_file", name=att.name), lambda: self.open_attachment(att))
         menu.addAction(tr("menu.edit"), lambda: self.edit_item(item_id))
-        if isinstance(item, Task):
+        if isinstance(item, Deadline):
             if item.is_done:
-                menu.addAction(tr("menu.mark_todo"), lambda: self.set_status(item_id, TaskStatus.TODO))
+                menu.addAction(tr("menu.mark_todo"), lambda: self.set_status(item_id, DeadlineStatus.TODO))
             else:
-                menu.addAction(tr("menu.mark_done"), lambda: self.set_status(item_id, TaskStatus.DONE))
+                menu.addAction(tr("menu.mark_done"), lambda: self.set_status(item_id, DeadlineStatus.DONE))
         menu.addSeparator()
         menu.addAction(tr("menu.delete"), lambda: self.delete_item(item_id))
         return menu
@@ -613,6 +764,7 @@ class MainWindow(QMainWindow):
         self._refresh_calendar()
         self._refresh_sidebar()
         self._refresh_panel()
+        self._refresh_overlay()
 
     def _refresh_keep_detail(self) -> None:
         """Làm mới mọi thứ nhưng giữ trang chi tiết đang mở (nếu mục còn tồn tại)."""
@@ -639,7 +791,7 @@ class MainWindow(QMainWindow):
             "today": len(self._repo.items_on(self._today, include_done=False)),
             "tomorrow": len(self._repo.items_on(tomorrow, include_done=False)),
             "upcoming": len(self._repo.upcoming(now)),
-            "overdue": len(self._repo.overdue_tasks(now)),
+            "overdue": len(self._repo.overdue_deadlines(now)),
         })
         self.sidebar.set_current(self._nav)
 
@@ -654,7 +806,7 @@ class MainWindow(QMainWindow):
                 subtitle = tr("search.results", count=count, text=text)
             else:
                 status = self._search_status.label.lower()  # type: ignore[union-attr]
-                subtitle = tr("search.status_tasks", count=count, status=status)
+                subtitle = tr("search.status_deadlines", count=count, status=status)
             self.panel.show_items(tr("search.title"), subtitle, items, now=now, today=self._today,
                                   group_by_day=True, colors=self._colors, empty_text=tr("search.empty"))
         elif self._nav == "upcoming":
@@ -663,7 +815,7 @@ class MainWindow(QMainWindow):
                                   now=now, today=self._today, group_by_day=True, colors=self._colors,
                                   empty_text=tr("upcoming.empty"))
         elif self._nav == "overdue":
-            items = self._repo.overdue_tasks(now)
+            items = self._repo.overdue_deadlines(now)
             self.panel.show_items(tr("overdue.title"), tr("overdue.subtitle", count=len(items)), items,
                                   now=now, today=self._today, group_by_day=True, colors=self._colors,
                                   empty_text=tr("overdue.empty"))

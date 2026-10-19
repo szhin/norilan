@@ -13,7 +13,7 @@ from app.colors import (
     mix,
     pick_tone,
 )
-from app.models import Event, Task
+from app.models import Event, Deadline
 
 DUE = datetime(2026, 10, 15, 9)
 
@@ -39,8 +39,8 @@ def test_assign_missing_tones_gives_distinct_colors():
 
 
 def test_resolver_modes():
-    task = Task("A", DUE, subject="Toán")
-    no_subject = Task("B", DUE)
+    task = Deadline("A", DUE, subject="Toán")
+    no_subject = Deadline("B", DUE)
     event = Event("E", DUE, DUE, color="green")
     plain_event = Event("F", DUE, DUE)
     by_subject = ColorResolver("subject", {"Toán": "purple"})

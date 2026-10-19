@@ -1,54 +1,22 @@
-"""Icon của app (vẽ bằng code, theo màu nhấn) – dùng cho cửa sổ, khay hệ thống và toast."""
+"""Icon của app (ảnh app/assets/icon.png) – dùng cho cửa sổ, khay hệ thống và toast."""
 from __future__ import annotations
 
 import struct
 from pathlib import Path
 
-from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QIcon, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, Qt
+from PySide6.QtGui import QIcon, QPixmap
 
 SIZES = (16, 20, 24, 32, 40, 48, 64, 128, 256)
 
 
-def render_icon(size: int, color: str = "#2383e2") -> QPixmap:
-    """Ô vuông bo góc màu nhấn, bên trong là tờ lịch trắng có dấu ✓."""
-    accent = QColor(color)
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    p = QPainter(pixmap)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+ICON_FILE = Path(__file__).resolve().parent.parent / "assets" / "icon.png"
 
-    gradient = QLinearGradient(0, 0, 0, size)
-    gradient.setColorAt(0, accent.lighter(118))
-    gradient.setColorAt(1, accent.darker(112))
-    p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(gradient)
-    p.drawRoundedRect(QRectF(0, 0, size, size), size * 0.23, size * 0.23)
 
-    margin = size * 0.2
-    body = QRectF(margin, margin * 1.1, size - 2 * margin, size - 2.05 * margin)
-    p.setBrush(QColor("#ffffff"))
-    p.drawRoundedRect(body, size * 0.07, size * 0.07)
-    band = QRectF(body.left(), body.top(), body.width(), body.height() * 0.26)
-    clip = QPainterPath()
-    clip.addRoundedRect(body, size * 0.07, size * 0.07)
-    p.setClipPath(clip)
-    p.setBrush(accent.darker(125))
-    p.drawRect(band)
-    p.setClipping(False)
-
-    pen = QPen(accent.darker(110), max(1.4, size * 0.085))
-    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-    p.setPen(pen)
-    p.setBrush(Qt.BrushStyle.NoBrush)
-    x, y, w, h = body.left(), band.bottom(), body.width(), body.bottom() - band.bottom()
-    check = QPainterPath(QPointF(x + w * 0.27, y + h * 0.52))
-    check.lineTo(QPointF(x + w * 0.45, y + h * 0.72))
-    check.lineTo(QPointF(x + w * 0.75, y + h * 0.32))
-    p.drawPath(check)
-    p.end()
-    return pixmap
+def render_icon(size: int, color: str = "") -> QPixmap:
+    """Icon của Norilan (ảnh app/assets/icon.png) thu về `size`. `color` giữ lại cho tương thích, không còn dùng."""
+    source = QPixmap(str(ICON_FILE))
+    return source.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
 
 
 def app_icon(color: str = "#2383e2") -> QIcon:

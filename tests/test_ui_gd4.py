@@ -17,7 +17,7 @@ from PySide6.QtCore import QCoreApplication
 from app import paths
 from app.files import FileService
 from app.instance import InstanceServer, deliver, send_to_running
-from app.models import Event, Task
+from app.models import Event, Deadline
 from app.notifier import RecordingNotifier
 from app.settings import Settings, load_settings
 from app.system import RUN_KEY, MemoryRegistry, WindowsIntegration
@@ -73,7 +73,7 @@ def test_close_without_tray_option(make_controller):
 
 # ------------------------------------------------------------------ Nhắc việc
 def test_check_reminders_sends_digest_and_item(make_controller, repo):
-    repo.add_task(Task("Lab 2", datetime(2026, 10, 15, 9)))
+    repo.add_deadline(Deadline("Lab 2", datetime(2026, 10, 15, 9)))
     repo.add_event(Event("Họp", datetime(2026, 10, 14, 20, 30), datetime(2026, 10, 14, 21), remind_before_minutes=60))
     c = make_controller()
     notes = c.check_reminders()
@@ -90,7 +90,7 @@ def test_reminder_errors_never_crash(make_controller, monkeypatch):
 
 # ------------------------------------------------------------------ Bấm vào toast / lần mở thứ hai
 def test_open_url_focuses_item_and_day(make_controller, repo):
-    task = repo.add_task(Task("Lab 2", datetime(2026, 10, 16, 9)))
+    task = repo.add_deadline(Deadline("Lab 2", datetime(2026, 10, 16, 9)))
     c = make_controller()
     c.handle_message({"cmd": "open", "url": f"norilan://item/{task.id}/"})
     assert c.window.isVisible() and c.window.panel.detail_item_id() == task.id
@@ -107,7 +107,7 @@ def test_open_deleted_item_shows_message(make_controller, prompts_stub):
 
 
 def test_tray_fallback_notifier_click_opens_item(make_controller, repo):
-    task = repo.add_task(Task("Lab 2", datetime(2026, 10, 14, 20, 30), remind_before_minutes=60))
+    task = repo.add_deadline(Deadline("Lab 2", datetime(2026, 10, 14, 20, 30), remind_before_minutes=60))
     c = make_controller(use_tray=True)
     c.notifier = TrayNotifier(c.tray)
     c.check_reminders()
@@ -117,7 +117,7 @@ def test_tray_fallback_notifier_click_opens_item(make_controller, repo):
 
 # ------------------------------------------------------------------ Cài đặt & màu sắc
 def test_settings_dialog_applies_everything(make_controller, repo, registry):
-    repo.add_task(Task("A", datetime(2026, 10, 15, 9), subject="Toán"))
+    repo.add_deadline(Deadline("A", datetime(2026, 10, 15, 9), subject="Toán"))
     c = make_controller()
 
     def fill(dialog):
@@ -156,9 +156,9 @@ def test_settings_cancel_reverts_preview(make_controller):
 
 
 def test_chips_colored_by_subject(make_controller, repo):
-    repo.add_task(Task("A", datetime(2026, 10, 15, 9), subject="Toán"))
-    repo.add_task(Task("B", datetime(2026, 10, 15, 10), subject="Lý"))
-    repo.add_task(Task("C", datetime(2026, 10, 15, 11)))
+    repo.add_deadline(Deadline("A", datetime(2026, 10, 15, 9), subject="Toán"))
+    repo.add_deadline(Deadline("B", datetime(2026, 10, 15, 10), subject="Lý"))
+    repo.add_deadline(Deadline("C", datetime(2026, 10, 15, 11)))
     repo.add_event(Event("D", datetime(2026, 10, 15, 12), datetime(2026, 10, 15, 13), color="pink"))
     c = make_controller()
     tones = c.window.month_view.cell_for(date(2026, 10, 15)).chip_tones()
@@ -178,7 +178,7 @@ def test_new_subject_color_from_task_dialog_is_saved(make_controller, repo):
         return dialog.result() == 1
 
     c.window._exec_dialog = fill
-    c.window.new_task(date(2026, 10, 16))
+    c.window.new_deadline(date(2026, 10, 16))
     assert repo.subject_colors()["Hoá học"] == "yellow"
 
 

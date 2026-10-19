@@ -7,7 +7,8 @@ from PySide6.QtCore import QEvent, QPoint, Qt, Signal
 from PySide6.QtGui import QContextMenuEvent, QMouseEvent
 from PySide6.QtWidgets import QLabel, QPushButton, QSizePolicy, QWidget
 
-from app.calendar_logic import chip_state, chip_text
+from app.calendar_logic import chip_label, chip_state
+from app.models import Deadline
 from app.models import CalendarItem
 from app.ui.theme import STATE_OWNS_COLOR, apply_tone, repolish
 
@@ -92,7 +93,7 @@ class ClickableLabel(QLabel):
 
 
 class Chip(ElidedLabel):
-    """Một mục trên ô lịch. Màu theo loại (task/event) và trạng thái (done/overdue/high)."""
+    """Một mục trên ô lịch. Màu theo loại (deadline/study/event) và trạng thái (done/overdue/soon/high)."""
 
     clicked = Signal(int)
     context_requested = Signal(int, QPoint)
@@ -107,12 +108,16 @@ class Chip(ElidedLabel):
         self._item_id = item.id
         state = chip_state(item, now)
         state_changed = self.property("state") != state
+        zero = isinstance(item, Deadline) and item.study_count == 0 and not item.is_done
+        flags_changed = state_changed | (self.property("kind") != item.KIND) | (self.property("zero") != zero)
         self.setProperty("state", state)
+        self.setProperty("kind", item.KIND)
+        self.setProperty("zero", zero)  # Deadline chưa có Study time: viền đứt
         apply_tone(self, tone, active=state not in STATE_OWNS_COLOR)
-        if state_changed:
+        if flags_changed:
             repolish(self)
         set_strike(self, state == "done")
-        self.setFullText(chip_text(item, day))
+        self.setFullText(chip_label(item, day))
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton and self._item_id is not None:

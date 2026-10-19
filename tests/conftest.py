@@ -85,6 +85,10 @@ class PromptStub:
         self.color: str | None = None
         self.gradient: str | None = None
         self.gradient_starts: list[str | None] = []
+        self.study_after = False                 # trả lời cho "Đặt thêm thời gian để làm deadline này?"
+        self.study_after_asked = 0
+        self.links_action = "cancel"             # 'delete' | 'unlink' | 'cancel'
+        self.links_asked: list[tuple[str, int]] = []
 
 
 @pytest.fixture
@@ -129,6 +133,17 @@ def prompts_stub(monkeypatch) -> PromptStub:
     monkeypatch.setattr(prompts, "show_info", lambda parent, text, details="": stub.infos.append(text))
     monkeypatch.setattr(prompts, "pick_color", lambda parent, start, title=None: stub.color)
     monkeypatch.setattr(prompts, "pick_gradient", pick_gradient)
+
+    def ask_study_after(parent):
+        stub.study_after_asked += 1
+        return stub.study_after
+
+    def ask_links(parent, title, count):
+        stub.links_asked.append((title, count))
+        return stub.links_action
+
+    monkeypatch.setattr(prompts, "ask_study_after_deadline", ask_study_after)
+    monkeypatch.setattr(prompts, "ask_delete_deadline_links", ask_links)
     return stub
 
 

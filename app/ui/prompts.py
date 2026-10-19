@@ -139,6 +139,38 @@ def confirm(parent: QWidget | None, title: str, text: str, *, ok_text: str | Non
     return box.clickedButton() is ok
 
 
+def ask_study_after_deadline(parent: QWidget | None) -> bool:
+    """Sau khi tạo Deadline mới: 'Đặt thêm thời gian để làm deadline này?' → True nếu chọn Có."""
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Question)
+    box.setWindowTitle(tr("prompt.study_after_title"))
+    box.setText(tr("prompt.study_after_text"))
+    yes = box.addButton(tr("common.yes"), QMessageBox.ButtonRole.AcceptRole)
+    box.addButton(tr("common.no"), QMessageBox.ButtonRole.RejectRole)
+    box.setDefaultButton(yes)
+    box.exec()
+    return box.clickedButton() is yes
+
+
+def ask_delete_deadline_links(parent: QWidget | None, title: str, count: int) -> str:
+    """Deadline còn Study time liên kết: 'Xoá luôn các Study time liên kết?' → 'delete' | 'unlink' | 'cancel'."""
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Question)
+    box.setWindowTitle(tr("delete.links_title"))
+    box.setText(tr("delete.links_text", title=title, count=count))
+    delete = box.addButton(tr("delete.links_delete"), QMessageBox.ButtonRole.DestructiveRole)
+    unlink = box.addButton(tr("delete.links_unlink"), QMessageBox.ButtonRole.AcceptRole)
+    cancel = box.addButton(tr("common.cancel"), QMessageBox.ButtonRole.RejectRole)
+    box.setDefaultButton(cancel)
+    box.exec()
+    clicked = box.clickedButton()
+    if clicked is delete:
+        return "delete"
+    if clicked is unlink:
+        return "unlink"
+    return "cancel"
+
+
 def show_error(parent: QWidget | None, text: str, details: str = "") -> None:
     box = QMessageBox(parent)
     box.setIcon(QMessageBox.Icon.Warning)

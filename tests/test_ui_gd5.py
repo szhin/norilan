@@ -12,7 +12,7 @@ from PySide6.QtGui import QColor, QImage, QImageReader
 
 from app import paths
 from app.files import FileService
-from app.models import Event, Task, TaskStatus
+from app.models import Event, Deadline, DeadlineStatus
 from app.notifier import RecordingNotifier
 from app.settings import Settings, load_settings
 from app.ui import theme
@@ -52,9 +52,9 @@ def make_image(path: Path, width: int = 800, height: int = 450) -> Path:
 # ------------------------------------------------------------------ Tìm kiếm
 @pytest.fixture
 def searchable(repo):
-    repo.add_task(Task("Ôn Giải tích", datetime(2026, 10, 15, 9), subject="Toán"))
-    done = repo.add_task(Task("Bài Giải tích cũ", datetime(2026, 10, 1, 9), subject="Toán"))
-    repo.set_task_status(done.id, TaskStatus.DONE)
+    repo.add_deadline(Deadline("Ôn Giải tích", datetime(2026, 10, 15, 9), subject="Toán"))
+    done = repo.add_deadline(Deadline("Bài Giải tích cũ", datetime(2026, 10, 1, 9), subject="Toán"))
+    repo.set_deadline_status(done.id, DeadlineStatus.DONE)
     repo.add_event(Event("Họp CLB", datetime(2026, 10, 16, 18), datetime(2026, 10, 16, 19), location="Nhà văn hoá"))
 
 
@@ -66,7 +66,7 @@ def test_search_from_sidebar(make_controller, searchable):
     assert "2 kết quả" in w.panel.subtitle()
     assert not any(b.isChecked() for b in w.sidebar.buttons.values())
 
-    w.panel.status_filter.setCurrentIndex(w.panel.status_filter.findData(TaskStatus.DONE))
+    w.panel.status_filter.setCurrentIndex(w.panel.status_filter.findData(DeadlineStatus.DONE))
     assert w.panel.list.titles() == ["Bài Giải tích cũ"]
     w.search("van hoa")
     assert w.panel.list.titles() == []                      # bộ lọc 'Xong' vẫn đang bật
@@ -159,10 +159,10 @@ def test_settings_choose_background_and_save(make_controller, tmp_path, prompts_
 
 # ------------------------------------------------------------------ Tự xoá việc đã xong
 def test_auto_delete_from_settings(make_controller, repo):
-    old = repo.add_task(Task("Xong lâu rồi", NOW - timedelta(days=40)))
-    repo.set_task_status(old.id, TaskStatus.DONE, at=NOW - timedelta(days=40))
-    recent = repo.add_task(Task("Mới xong", NOW - timedelta(days=2)))
-    repo.set_task_status(recent.id, TaskStatus.DONE, at=NOW - timedelta(days=2))
+    old = repo.add_deadline(Deadline("Xong lâu rồi", NOW - timedelta(days=40)))
+    repo.set_deadline_status(old.id, DeadlineStatus.DONE, at=NOW - timedelta(days=40))
+    recent = repo.add_deadline(Deadline("Mới xong", NOW - timedelta(days=2)))
+    repo.set_deadline_status(recent.id, DeadlineStatus.DONE, at=NOW - timedelta(days=2))
     c = make_controller()
     seen = {}
 
@@ -173,28 +173,28 @@ def test_auto_delete_from_settings(make_controller, repo):
 
     c._exec_dialog = enable
     c.open_settings()
-    assert "1 bài tập" in seen["warning"]
-    assert repo.get_task(old.id) is None and repo.get_task(recent.id) is not None
+    assert "1 deadline" in seen["warning"]
+    assert repo.get_deadline(old.id) is None and repo.get_deadline(recent.id) is not None
 
 
 def test_auto_delete_runs_on_timer(make_controller, repo):
     c = make_controller(Settings(auto_delete_done_days=7))
-    task = repo.add_task(Task("A", NOW - timedelta(days=10)))
-    repo.set_task_status(task.id, TaskStatus.DONE, at=NOW - timedelta(days=10))
+    task = repo.add_deadline(Deadline("A", NOW - timedelta(days=10)))
+    repo.set_deadline_status(task.id, DeadlineStatus.DONE, at=NOW - timedelta(days=10))
     c.check_reminders()
-    assert repo.get_task(task.id) is None
+    assert repo.get_deadline(task.id) is None
 
 
 # ------------------------------------------------------------------ Sao lưu / khôi phục
 def test_backup_then_restore_through_ui(make_controller, repo, tmp_path, prompts_stub):
-    repo.add_task(Task("Trong bản sao lưu", NOW))
+    repo.add_deadline(Deadline("Trong bản sao lưu", NOW))
     c = make_controller(Settings(accent="green"))
     c.apply_settings(Settings(accent="green"))
     prompts_stub.save_path = str(tmp_path / "saoluu")        # thiếu đuôi .zip → tự thêm
     backup = c.backup()
     assert backup == tmp_path / "saoluu.zip" and backup.exists() and prompts_stub.infos
 
-    repo.add_task(Task("Thêm sau khi sao lưu", NOW))
+    repo.add_deadline(Deadline("Thêm sau khi sao lưu", NOW))
     c.apply_settings(Settings(accent="purple", autostart=True))
     prompts_stub.open_path = str(backup)
     prompts_stub.confirm_answer = False

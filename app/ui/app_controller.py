@@ -129,7 +129,7 @@ class AppController(QObject):
         self.window.bring_to_front()
 
     def quick_add(self) -> None:
-        self.window.new_task()
+        self.window.new_deadline()
 
     def handle_message(self, message: dict) -> None:
         """Lệnh từ lần mở thứ hai (vd. bấm vào toast, hoặc mở lại Norilan khi đang chạy)."""
@@ -200,7 +200,7 @@ class AppController(QObject):
         now = self._clock()
         today = len(self._repo.items_on(now.date(), include_done=False))
         tomorrow = len(self._repo.items_on(now.date() + timedelta(days=1), include_done=False))
-        overdue = len(self._repo.overdue_tasks(now))
+        overdue = len(self._repo.overdue_deadlines(now))
         text = tr("tray.tooltip", app=APP_NAME, today=today, tomorrow=tomorrow)
         if overdue:
             text += "\n" + tr("tray.tooltip_overdue", overdue=overdue)
