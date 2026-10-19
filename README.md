@@ -424,6 +424,6 @@ Bấm **More info** → **Run anyway**. File chưa có chữ ký số nên Windo
 
 <div align="center">
 
-Made with ❤️ &nbsp;·&nbsp; Norilan v0.5.0
+Made with ❤️ &nbsp;·&nbsp; Norilan v0.5.1
 
 </div>
