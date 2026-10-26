@@ -18,7 +18,7 @@ from app.backup import BackupError, create_backup, default_backup_name, prune_ba
 from app.colors import accent_color
 from app.files import FileService
 from app.i18n import tr
-from app.maintenance import auto_clean, count_expired
+from app.maintenance import clean_expired, count_expired
 from app.notifier import Notifier, RecordingNotifier, WinotifyNotifier, winotify_available
 from app.reminders import Notification, ReminderService
 from app.repository import Repository
@@ -201,15 +201,15 @@ class AppController(QObject):
             return []
 
     def run_maintenance(self) -> int:
-        """Tự xoá deadline hết hạn lưu (xem maintenance.py). Quyết định theo mốc thời gian so với giờ hệ thống."""
-        removed = auto_clean(
+        """Tự xoá deadline và sự kiện hết hạn lưu (xem maintenance.py). Quyết định theo mốc thời gian so với giờ hệ thống."""
+        removed, removed_events = clean_expired(
             self._repo, self._settings, self._clock(), attachments_dir=self._data_dir / "attachments",
             backups_dir=self._data_dir / "backups", data_dir=self._data_dir,
-            skip_ids=self.window.editing_deadline_ids(),   # deadline đang mở trong hộp thoại sửa thì để lượt sau
+            skip_ids=self.window.editing_deadline_ids(),   # mục đang mở trong hộp thoại sửa thì để lượt sau
         )
-        if removed:
-            self.window.after_auto_delete(removed)
-        return removed
+        if removed or removed_events:
+            self.window.after_auto_delete(removed, removed_events)
+        return removed + removed_events
 
     def _safe_maintenance(self) -> None:
         try:

@@ -17,7 +17,7 @@ from app.maintenance import (
     select_expired,
     time_until_delete,
 )
-from app.models import Attachment, Deadline, DeadlineStatus, Event, StudyTime
+from app.models import Attachment, Deadline, DeadlineStatus, Event, Exam, StudyTime
 from app.repository import Repository
 from app.settings import Settings
 
@@ -157,17 +157,38 @@ def clean(repo, tmp_path, now=NOW, settings=ALL_ON, **kw):
                       backups_dir=tmp_path / "backups", data_dir=tmp_path, **kw)
 
 
-def test_event_and_study_time_are_never_selected_and_study_is_unlinked(repo, clock, tmp_path):
+def test_study_time_is_never_selected_and_is_unlinked(repo, clock, tmp_path):
     old = NOW - 100 * 24 * H
     d = dl(repo, "cũ", due=old)
     study = repo.add_study_time(StudyTime("Học", old, old + H, deadline_id=d.id))
-    event = repo.add_event(Event("Họp", old, old + H))
     far = NOW + 100 * 24 * H
     assert expired(repo, far) == ["cũ"]                                  # chỉ Deadline
     assert clean(repo, tmp_path, now=far) == 1
     assert repo.get_deadline(d.id) is None
     assert repo.get_study_time(study.id).deadline_id is None             # còn, chỉ mất liên kết
+
+
+def test_event_deleted_exactly_12h_after_it_ends(repo, clock, tmp_path):
+    event = repo.add_event(Event("Họp", NOW - 3 * H, NOW - H))           # kết thúc lúc NOW - 1h
+    ends = NOW - H
+    assert clean(repo, tmp_path, now=ends + 12 * H - timedelta(minutes=1)) == 0     # 11h59
     assert repo.get_event(event.id) is not None
+    assert clean(repo, tmp_path, now=ends + 12 * H) == 1                              # 12h00
+    assert repo.get_event(event.id) is None
+
+
+def test_running_and_future_events_and_exams_are_kept(repo, clock, tmp_path):
+    running = repo.add_event(Event("Đang họp", NOW - H, NOW + H))
+    future = repo.add_event(Event("Mai họp", NOW + 20 * H, NOW + 21 * H))
+    exam = repo.add_exam(Exam("Toán", NOW - 30 * 24 * H))                # ca thi cũ không bị tự xoá
+    assert clean(repo, tmp_path, now=NOW) == 0
+    assert all(repo.get_item(i.id) is not None for i in (running, future, exam))
+
+
+def test_event_in_edit_dialog_is_skipped_then_deleted(repo, clock, tmp_path):
+    event = repo.add_event(Event("Họp", NOW - 30 * H, NOW - 29 * H))
+    assert clean(repo, tmp_path, now=NOW, skip_ids={event.id}) == 0
+    assert clean(repo, tmp_path, now=NOW) == 1
 
 
 def test_skip_deadline_open_in_edit_dialog(repo, clock, tmp_path):

@@ -182,6 +182,55 @@ MIGRATIONS: list[str] = [
     CREATE INDEX idx_items_deadline    ON items(deadline_id);
     CREATE INDEX idx_items_course      ON items(course_id);
     """,
+    # v8 – ca thi (kind 'exam'): môn thi = title, lớp thi = exam_class, không có ends_at.
+    # Dựng lại items để thêm 'exam' vào CHECK của `kind` (cùng cách làm với v4/v7).
+    """
+    CREATE TABLE items_new (
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind                  TEXT    NOT NULL CHECK (kind IN ('deadline', 'event', 'study', 'class', 'exam')),
+        title                 TEXT    NOT NULL,
+        notes                 TEXT    NOT NULL DEFAULT '',
+        starts_at             TEXT    NOT NULL,          -- deadline: hạn nộp; còn lại: giờ bắt đầu
+        ends_at               TEXT,                      -- event, study, class
+        location              TEXT    NOT NULL DEFAULT '',
+        status                TEXT    CHECK (status IN ('todo', 'in_progress', 'done')),
+        priority              INTEGER NOT NULL DEFAULT 1,
+        subject               TEXT    NOT NULL DEFAULT '',
+        remind_before_minutes INTEGER CHECK (remind_before_minutes >= 0),
+        reminder_sent_at      TEXT,
+        open_file_on_click    INTEGER NOT NULL DEFAULT 0,
+        created_at            TEXT    NOT NULL,
+        updated_at            TEXT    NOT NULL,
+        color                 TEXT,
+        completed_at          TEXT,
+        deadline_id           INTEGER REFERENCES items_new(id) ON DELETE SET NULL,  -- chỉ study
+        end_warned_at         TEXT,
+        due_changed_at        TEXT,
+        course_id             INTEGER REFERENCES courses(id) ON DELETE CASCADE,   -- chỉ class
+        exam_class            TEXT    NOT NULL DEFAULT '',                          -- chỉ exam
+        CHECK ((kind = 'deadline' AND status IS NOT NULL)
+            OR (kind = 'event' AND ends_at IS NOT NULL)
+            OR (kind = 'study' AND ends_at IS NOT NULL)
+            OR (kind = 'class' AND ends_at IS NOT NULL AND course_id IS NOT NULL)
+            OR kind = 'exam'),
+        CHECK (deadline_id IS NULL OR kind = 'study'),
+        CHECK (course_id IS NULL OR kind = 'class')
+    );
+    INSERT INTO items_new (id, kind, title, notes, starts_at, ends_at, location, status, priority, subject,
+                           remind_before_minutes, reminder_sent_at, open_file_on_click, created_at,
+                           updated_at, color, completed_at, deadline_id, end_warned_at, due_changed_at, course_id)
+        SELECT id, kind, title, notes, starts_at, ends_at, location, status, priority, subject,
+               remind_before_minutes, reminder_sent_at, open_file_on_click, created_at,
+               updated_at, color, completed_at, deadline_id, end_warned_at, due_changed_at, course_id
+        FROM items;
+    DROP TABLE items;
+    ALTER TABLE items_new RENAME TO items;
+    CREATE INDEX idx_items_starts_at   ON items(starts_at);
+    CREATE INDEX idx_items_kind_status ON items(kind, status);
+    CREATE INDEX idx_items_completed   ON items(kind, status, completed_at);
+    CREATE INDEX idx_items_deadline    ON items(deadline_id);
+    CREATE INDEX idx_items_course      ON items(course_id);
+    """,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

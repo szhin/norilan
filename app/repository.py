@@ -9,6 +9,7 @@ import sqlite3
 from datetime import date, datetime, time, timedelta
 from typing import Any, Iterable
 
+from app.calendar_logic import EXAM_ACTIVE
 from app.countdown import warning_due
 from app.db import fold_text
 from app.i18n import tr
@@ -19,6 +20,7 @@ from app.models import (
     ClassSession,
     Course,
     Event,
+    Exam,
     Priority,
     Deadline,
     DeadlineStatus,
@@ -32,10 +34,13 @@ log = logging.getLogger(__name__)
 _ITEM_COLS = (
     "id, kind, title, notes, starts_at, ends_at, location, status, priority, subject, "
     "remind_before_minutes, reminder_sent_at, color, completed_at, deadline_id, end_warned_at, "
-    "due_changed_at, course_id, created_at, updated_at"
+    "due_changed_at, course_id, exam_class, created_at, updated_at"
 )
-# Cùng giờ thì: deadline → lớp học → study → event.
-_KIND_ORDER_SQL = "CASE kind WHEN 'deadline' THEN 0 WHEN 'class' THEN 1 WHEN 'study' THEN 2 ELSE 3 END"
+# Cùng giờ thì: ca thi → deadline → lớp học → study → event.
+_KIND_ORDER_SQL = (
+    "CASE kind WHEN 'exam' THEN 0 WHEN 'deadline' THEN 1 WHEN 'class' THEN 2 WHEN 'study' THEN 3 ELSE 4 END"
+)
+
 _ATT_COLS = "id, item_id, kind, target, display_name, position, created_at"
 _COURSE_COLS = (
     "id, name, weekdays, start_time, end_time, first_day, weeks, room, location, notes, "
@@ -104,6 +109,13 @@ def _row_to_item(row: sqlite3.Row) -> CalendarItem:
             subject=row["subject"],
             completed_at=opt_from_iso(row["completed_at"]),
             due_changed_at=opt_from_iso(row["due_changed_at"]),
+            **common,
+        )
+    if row["kind"] == Exam.KIND:
+        return Exam(
+            starts_at=from_iso(row["starts_at"]),
+            exam_class=row["exam_class"],
+            location=row["location"],
             **common,
         )
     if row["kind"] == StudyTime.KIND:
@@ -302,6 +314,65 @@ class Repository:
             raise NotFoundError(f"Không tìm thấy event #{event_id}")
         return event
 
+    # ------------------------------------------------------------------ Ca thi
+    def add_exam(self, exam: Exam) -> Exam:
+        exam.validate()
+        ts = to_iso(_now())
+        with self._conn:
+            cur = self._conn.execute(
+                """INSERT INTO items (kind, title, notes, starts_at, location, exam_class,
+                       remind_before_minutes, created_at, updated_at)
+                   VALUES ('exam', ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    exam.title.strip(), exam.notes, to_iso(exam.starts_at), exam.location.strip(),
+                    exam.exam_class.strip(), exam.remind_before_minutes, ts, ts,
+                ),
+            )
+        log.info("Added exam #%s %r", cur.lastrowid, exam.title)
+        return self._require_exam(cur.lastrowid)
+
+    def update_exam(self, exam: Exam) -> Exam:
+        if exam.id is None:
+            raise ValueError("Exam chưa có id")
+        exam.validate()
+        params = {
+            "id": exam.id, "title": exam.title.strip(), "notes": exam.notes,
+            "starts_at": to_iso(exam.starts_at), "location": exam.location.strip(),
+            "exam_class": exam.exam_class.strip(), "remind": exam.remind_before_minutes, "now": to_iso(_now()),
+        }
+        with self._conn:
+            cur = self._conn.execute(
+                f"""UPDATE items SET {_RESET_REMINDER_SQL},
+                       title = :title, notes = :notes, starts_at = :starts_at, location = :location,
+                       exam_class = :exam_class, remind_before_minutes = :remind, updated_at = :now
+                   WHERE id = :id AND kind = 'exam'""",
+                params,
+            )
+        if cur.rowcount == 0:
+            raise NotFoundError(f"Không tìm thấy ca thi #{exam.id}")
+        return self._require_exam(exam.id)
+
+    def get_exam(self, exam_id: int) -> Exam | None:
+        item = self.get_item(exam_id)
+        return item if isinstance(item, Exam) else None
+
+    def _require_exam(self, exam_id: int) -> Exam:
+        exam = self.get_exam(exam_id)
+        if exam is None:
+            raise NotFoundError(f"Không tìm thấy ca thi #{exam_id}")
+        return exam
+
+    def upcoming_exams(self, now: datetime, *, days: int | None = None) -> list[Exam]:
+        """Ca thi chưa qua (đang thi cũng tính), gần nhất trước. `days`: chỉ lấy ca thi trong N ngày tới,
+        tính theo ngày lịch (ca thi lúc 23:00 của ngày thứ N vẫn được tính)."""
+        sql = f"SELECT {_ITEM_COLS} FROM items WHERE kind = 'exam' AND starts_at >= :since"
+        params: dict[str, Any] = {"since": to_iso(now - EXAM_ACTIVE)}
+        if days is not None:
+            params["until"] = to_iso(day_range(now.date() + timedelta(days=days))[1])
+            sql += " AND starts_at < :until"
+        rows = self._conn.execute(sql + " ORDER BY starts_at, id", params).fetchall()
+        return self._hydrate(rows)  # type: ignore[return-value]
+
     # ------------------------------------------------------------ Study time
     def _check_study_link(self, study: StudyTime) -> None:
         if study.deadline_id is not None and self.get_deadline(study.deadline_id) is None:
@@ -403,6 +474,23 @@ class Repository:
             f"SELECT {_ITEM_COLS} FROM items WHERE kind = 'deadline' ORDER BY starts_at, id"
         ).fetchall()
         return self._hydrate(rows)  # type: ignore[return-value]
+
+    # ------------------------------------------------------------ Tự xoá sự kiện cũ
+    def list_events(self) -> list[Event]:
+        rows = self._conn.execute(
+            f"SELECT {_ITEM_COLS} FROM items WHERE kind = 'event' ORDER BY starts_at, id"
+        ).fetchall()
+        return self._hydrate(rows)  # type: ignore[return-value]
+
+    def delete_events(self, event_ids: Iterable[int]) -> int:
+        """Xoá nhiều Event trong MỘT transaction (đường xoá của tự xoá). Trả về số đã xoá."""
+        removed = 0
+        with self._conn:
+            for event_id in event_ids:
+                removed += self._conn.execute(
+                    "DELETE FROM items WHERE id = ? AND kind = 'event'", (event_id,)
+                ).rowcount
+        return removed
 
     # ------------------------------------------------------------ Môn học (thời khoá biểu)
     def _check_course_name(self, course: Course) -> None:
@@ -569,7 +657,7 @@ class Repository:
 
     def count_items(self) -> dict[str, int]:
         rows = self._conn.execute("SELECT kind, COUNT(*) AS n FROM items GROUP BY kind").fetchall()
-        counts = {"deadline": 0, "event": 0, "study": 0, "class": 0}
+        counts = {"deadline": 0, "event": 0, "study": 0, "class": 0, "exam": 0}
         counts.update({r["kind"]: r["n"] for r in rows})
         return counts
 

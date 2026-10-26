@@ -19,6 +19,7 @@ LIGHT: dict[str, str] = {
     "done_bg": "#f1f1ef", "done_fg": "#a5a29c", "overdue_bg": "#fde8e8", "overdue_fg": "#c4332b",
     "badge_bg": "#e7e6e3", "danger": "#d44c47", "warn_bg": "#fff0d1", "warn_fg": "#a85a00",
     "study_bg": "#e6f4ea", "study_fg": "#2f7a4a",
+    "exam_bg": "#d62839", "exam_fg": "#ffffff", "exam_soft": "#fde3e6",
 }
 
 DARK: dict[str, str] = {
@@ -29,6 +30,7 @@ DARK: dict[str, str] = {
     "done_bg": "#262626", "done_fg": "#6f6e69", "overdue_bg": "#4a2323", "overdue_fg": "#ff9b94",
     "badge_bg": "#333333", "danger": "#ff7b72", "warn_bg": "#4d3a14", "warn_fg": "#f3c05a",
     "study_bg": "#1f3d2b", "study_fg": "#7fd1a0",
+    "exam_bg": "#e5484d", "exam_fg": "#ffffff", "exam_soft": "#4a2227",
 }
 
 THEMES = {"light": LIGHT, "dark": DARK}
@@ -86,6 +88,8 @@ QPushButton#SegButton:checked { background: $selected; font-weight: 600; }
 #DayCell[outside="true"] { background: $surface_outside; }
 #DayCell:hover { background: $surface_hover; }
 #DayCell[selected="true"] { background: $surface_selected; }
+#DayCell[exam="true"] { background: $exam_soft; }
+#DayCell[exam="true"][selected="true"] { border: 2px solid $accent; }
 QPushButton#CellAdd { background: transparent; border: none; border-radius: 4px; padding: 0px;
     color: $text_muted; font-size: 15px; min-width: 20px; max-width: 20px; min-height: 20px; max-height: 20px; }
 QPushButton#CellAdd:hover { background: $hover; color: $text; }
@@ -100,6 +104,7 @@ $tone_rules
 #Chip[state="high"] { font-weight: 700; }
 #Chip[state="overdue"] { background: $overdue_bg; color: $overdue_fg; }
 #Chip[state="soon"] { background: $warn_bg; color: $warn_fg; font-weight: 700; }
+#Chip[state="exam"] { background: $exam_bg; color: $exam_fg; font-weight: 800; border: 2px solid $exam_fg; }
 #Chip[kind="deadline"] { font-weight: 600; }
 #Chip[kind="deadline"][zero="true"] { border: 1px dashed $warn_fg; }
 #Chip[state="done"] { background: $done_bg; color: $done_fg; }
@@ -120,16 +125,20 @@ $tone_rules
 #GroupHeader { color: $text_muted; font-size: 11px; font-weight: 700; padding: 8px 2px 2px 2px; }
 #ItemCard { background: $surface_card; border: 1px solid $border; border-radius: 8px; }
 #ItemCard:hover { background: $outside_bg; border-color: $text_faint; }
+#ItemCard[kind="exam"] { background: $exam_soft; border: 2px solid $exam_bg; }
 #ItemCard[selected="true"] { border: 1px solid $accent; background: $selected_cell; }
 #KindBar { border-radius: 2px; }
 #KindBar[state="overdue"] { background: $overdue_fg; }
 #KindBar[state="soon"] { background: $warn_fg; }
 #KindBar[state="done"] { background: $done_fg; }
+#KindBar[state="exam"] { background: $exam_bg; }
 #CardTitle { font-weight: 600; }
 #CardTitle[state="done"] { color: $done_fg; }
+#CardTitle[state="exam"] { color: $exam_bg; font-weight: 800; }
 #CardMeta { color: $text_muted; font-size: 12px; }
 #CardMeta[state="overdue"] { color: $overdue_fg; }
 #CardMeta[state="soon"] { color: $warn_fg; font-weight: 600; }
+#CardMeta[state="exam"] { color: $exam_bg; font-weight: 700; }
 #KindIcon { background: transparent; font-size: 13px; }
 #StudyBadge { background: $badge_bg; color: $text_muted; border-radius: 8px; padding: 0px 6px; font-size: 11px; }
 #StudyBadge[zero="true"] { background: $warn_bg; color: $warn_fg; font-weight: 700; }
@@ -143,9 +152,24 @@ QPushButton#LinkButton:hover { color: $accent; }
 #KindPill[kind="deadline"] { background: $task_bg; color: $task_fg; }
 #KindPill[kind="event"] { background: $event_bg; color: $event_fg; }
 #KindPill[kind="study"] { background: $study_bg; color: $study_fg; }
+#KindPill[kind="exam"] { background: $exam_bg; color: $exam_fg; }
 #FieldLabel { color: $text_muted; }
 #FieldValue[state="overdue"] { color: $overdue_fg; font-weight: 600; }
 #FieldValue[state="soon"] { color: $warn_fg; font-weight: 600; }
+#FieldValue[state="exam"] { color: $exam_bg; font-weight: 700; }
+#ExamCountdown { background: $exam_bg; color: $exam_fg; border-radius: 8px; padding: 10px 12px; font-size: 16px;
+    font-weight: 800; }
+#ExamBanner { background: $exam_bg; border: none; }
+QPushButton#ExamRow { background: transparent; border: none; color: $exam_fg; font-size: 15px; font-weight: 800;
+    text-align: left; padding: 4px 0px; }
+QPushButton#ExamRow[today="true"] { font-size: 18px; }
+QPushButton#ExamRow:hover, QPushButton#ExamRow:pressed { background: rgba(255, 255, 255, 40); }
+QPushButton#ExamToggle { background: rgba(255, 255, 255, 40); color: $exam_fg; border: 1px solid rgba(255, 255, 255, 140);
+    border-radius: 6px; font-weight: 700; padding: 5px 14px; }
+QPushButton#ExamToggle:hover { background: rgba(255, 255, 255, 80); }
+#ExamBanner QScrollArea { background: transparent; border: none; }
+QPushButton#NewExamButton { background: $exam_bg; color: $exam_fg; border: 1px solid $exam_bg; font-weight: 700; }
+QPushButton#NewExamButton:hover { background: $exam_bg; border-color: $exam_fg; }
 #StudyLink { background: $outside_bg; border: 1px solid $border; border-radius: 6px; text-align: left; padding: 4px 8px; }
 #StudyLink:hover { border-color: $accent; }
 #LinkedCard { background: $outside_bg; border: 1px solid $border; border-radius: 8px; }
@@ -400,7 +424,7 @@ def apply_theme(
 
 
 # Trạng thái có màu riêng trong QSS chung (đè lên tone): chip/thanh của việc đã xong hoặc quá hạn.
-STATE_OWNS_COLOR = ("done", "overdue", "soon")
+STATE_OWNS_COLOR = ("done", "overdue", "soon", "exam")
 
 
 def gradient_qss(tone: str, *, vertical: bool = False) -> str:

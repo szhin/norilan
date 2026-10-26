@@ -161,7 +161,7 @@ def test_migration_v7_keeps_existing_items(tmp_path):
     raw.commit()
     raw.close()
     conn = connect(path)
-    assert schema_version(conn) == SCHEMA_VERSION == 7
+    assert schema_version(conn) == SCHEMA_VERSION == 8
     from app.repository import Repository
 
     repo = Repository(conn)

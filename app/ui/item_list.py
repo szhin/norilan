@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabe
 from app.calendar_logic import chip_state, group_label, item_meta, kind_icon
 from app.colors import ColorResolver
 from app.i18n import tr
-from app.models import CalendarItem, Deadline, StudyTime
+from app.models import CalendarItem, Deadline, Exam, StudyTime
 from app.ui.theme import STATE_OWNS_COLOR, apply_tone, repolish
 from app.ui.widgets import ElidedLabel, set_strike
 
@@ -38,7 +38,7 @@ class ItemCard(QFrame):
         layout.setSpacing(10)
 
         bar = QFrame(objectName="KindBar")
-        bar.setFixedWidth(5 if isinstance(item, Deadline) else 3)  # Deadline: thanh dày hơn
+        bar.setFixedWidth(8 if isinstance(item, Exam) else 5 if isinstance(item, Deadline) else 3)  # Ca thi dày nhất
         bar.setProperty("state", state)
         apply_tone(bar, tone, vertical=True, active=state not in STATE_OWNS_COLOR)
         layout.addWidget(bar)

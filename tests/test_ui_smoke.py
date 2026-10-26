@@ -59,7 +59,7 @@ def test_month_cell_limits_chips_to_three(window):
 
 def test_sidebar_counts(window):
     counts = {k: b.count_text() for k, b in window.sidebar.buttons.items()}
-    assert counts == {"calendar": "", "today": "1", "tomorrow": "1", "upcoming": "7", "overdue": "1"}
+    assert counts == {"calendar": "", "today": "1", "tomorrow": "1", "upcoming": "7", "exams": "", "overdue": "1"}
 
 
 def test_navigation_and_views(window):

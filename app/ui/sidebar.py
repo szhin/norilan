@@ -29,6 +29,7 @@ NAV_ITEMS: tuple[tuple[str, str], ...] = (
     ("today", "☀️"),
     ("tomorrow", "🌤️"),
     ("upcoming", "🗓️"),
+    ("exams", "🎓"),
     ("overdue", "⏰"),
 )
 
@@ -105,6 +106,7 @@ class CourseButton(QPushButton):
 class Sidebar(QFrame):
     nav_changed = Signal(str)
     new_deadline_requested = Signal()
+    new_exam_requested = Signal()
     settings_requested = Signal()
     search_changed = Signal(str)
     new_course_requested = Signal()
@@ -147,6 +149,11 @@ class Sidebar(QFrame):
         new_deadline.setToolTip(tr("sidebar.new_deadline_tooltip"))
         new_deadline.clicked.connect(self.new_deadline_requested)
         layout.addWidget(new_deadline)
+        new_exam = QPushButton(tr("sidebar.new_exam"), objectName="SidebarAction")
+        new_exam.setCursor(Qt.CursorShape.PointingHandCursor)
+        new_exam.setToolTip(tr("sidebar.new_exam_tooltip"))
+        new_exam.clicked.connect(self.new_exam_requested)
+        layout.addWidget(new_exam)
         layout.addWidget(QLabel(tr("sidebar.section"), objectName="SidebarSection"))
 
         self._group = QButtonGroup(self)
@@ -247,4 +254,4 @@ class Sidebar(QFrame):
     def set_counts(self, counts: dict[str, int]) -> None:
         for key, value in counts.items():
             if key in self.buttons:
-                self.buttons[key].set_count(value, danger=key == "overdue")
+                self.buttons[key].set_count(value, danger=key in ("overdue", "exams"))

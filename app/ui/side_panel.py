@@ -22,14 +22,14 @@ from PySide6.QtWidgets import (
 
 from app.countdown import CountdownState, Phase, format_hms, state as countdown_state
 from app.calendar_logic import (
-    chip_state, course_period_text, course_schedule_text, day_heading, day_month_text, format_minutes, item_meta,
-    kind_icon, round_for_display, time_left_text, time_text,
+    EXAM_ACTIVE, chip_state, course_period_text, course_schedule_text, day_heading, day_month_text, exam_when_text, format_minutes,
+    item_meta, kind_icon, round_for_display, time_left_text, time_text,
 )
 from app.colors import ColorResolver
 from app.files import is_missing
 from app.i18n import tr
 from app.models import (
-    Attachment, AttachmentKind, CalendarItem, ClassSession, Course, Deadline, DeadlineStatus, StudyTime,
+    Attachment, AttachmentKind, CalendarItem, ClassSession, Course, Deadline, DeadlineStatus, Exam, StudyTime,
 )
 from app.ui.dialogs import ATTACHMENT_ICON
 from app.ui.item_list import ItemCard, ItemListWidget
@@ -41,7 +41,7 @@ from app.ui.widgets import ElidedButton, ElidedLabel
 _FIELD_ICONS = {
     "due": "🗓", "status": "◉", "priority": "⚑", "subject": "🏷", "remind": "⏰",
     "notes": "≡", "attachments": "📎", "time": "🕒", "location": "📍",
-    "room": "🚪", "schedule": "🔁", "period": "📆", "next": "⏭",
+    "room": "🚪", "schedule": "🔁", "period": "📆", "next": "⏭", "exam_class": "🎓",
 }
 
 
@@ -409,6 +409,18 @@ class DetailView(QWidget):
             self.countdown_widget.clicked.connect(lambda i=item.id: self.countdown_clicked.emit(i))
             slot_layout.addWidget(self.countdown_widget)
             self._extras.addWidget(self.countdown_slot)
+        elif isinstance(item, Exam):
+            active = now < item.starts_at + EXAM_ACTIVE
+            self._row("time", f"{item.starts_at:%H:%M} · {day_heading(item.starts_at.date())}",
+                      state="exam" if active else None)
+            self._row("exam_class", item.exam_class or "—")
+            self._row("location", item.location or "—")
+            self._row("remind", format_minutes(item.remind_before_minutes))
+            self._row("notes", item.notes or "—")
+            if active:   # dải đỏ lớn: còn bao lâu nữa thi
+                countdown = QLabel(exam_when_text(item, now), objectName="ExamCountdown")
+                countdown.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                self._extras.addWidget(countdown)
         elif isinstance(item, ClassSession):
             self._row("time", f"{time_text(item)} · {day_heading(item.starts_at.date())}")
             self._row("room", item.room or "—")

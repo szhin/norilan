@@ -6,13 +6,15 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Callable
 
 from app import links
-from app.calendar_logic import day_month_text, format_minutes, place_text, relative_label, round_for_display
+from app.calendar_logic import (
+    EXAM_ALERT_DAYS, day_month_text, exam_days_left, format_minutes, place_text, relative_label, round_for_display,
+)
 from app.i18n import tr
-from app.models import CalendarItem, ClassSession, Deadline, Event, StudyTime
+from app.models import CalendarItem, ClassSession, Deadline, Event, Exam, StudyTime
 from app.repository import Repository
 from app.settings import Settings
 
@@ -20,6 +22,8 @@ log = logging.getLogger(__name__)
 
 DIGEST_STATE_KEY = "last_digest_date"
 DIGEST_MAX_LINES = 4
+EXAM_ALERT_KEY = "exam_alert_date_{id}"   # app_state: ngày gần nhất đã báo ca thi này
+EXAM_ALERT_FROM = time(7, 0)               # báo từ giờ này trở đi (app mở muộn vẫn nhận)
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +57,14 @@ def item_notification(item: CalendarItem, now: datetime) -> Notification:
         if item.subject:
             details.append(item.subject)
         title = f"📖 {item.title}"
+    elif isinstance(item, Exam):
+        details = [tr("notify.exam", time=f"{item.starts_at:%H:%M}", day=when_day,
+                      remaining=_remaining(item.starts_at, now))]
+        if item.exam_class:
+            details.append(f"{tr('field.exam_class')}: {item.exam_class}")
+        if item.location:
+            details.append(f"📍 {item.location}")
+        title = f"🎓 {tr('exam.chip', title=item.title)}"
     elif isinstance(item, ClassSession):
         details = [tr("notify.class", time=f"{item.starts_at:%H:%M}", day=when_day,
                       remaining=_remaining(item.starts_at, now))]
@@ -71,6 +83,29 @@ def item_notification(item: CalendarItem, now: datetime) -> Notification:
         title=title,
         body="\n".join(details),
         url=links.item_url(item.id),  # type: ignore[arg-type]
+    )
+
+
+def exam_alert_notification(exam: Exam, now: datetime) -> Notification:
+    """Toast nhắc ca thi hằng ngày (trong 15 ngày trước ngày thi): 'Còn 5 ngày nữa thi Toán'."""
+    days = exam_days_left(exam, now)
+    if days <= 0:
+        title = tr("exam.alert_today", title=exam.title)
+    elif days == 1:
+        title = tr("exam.alert_tomorrow", title=exam.title)
+    else:
+        title = tr("exam.alert_days", count=days, days=days, title=exam.title)
+    lines = [tr("exam.alert_body", title=exam.title, time=f"{exam.starts_at:%H:%M}",
+                day=day_month_text(exam.starts_at))]
+    if exam.exam_class:
+        lines.append(f"{tr('field.exam_class')}: {exam.exam_class}")
+    if exam.location:
+        lines.append(f"📍 {exam.location}")
+    return Notification(
+        key=f"exam-alert-{exam.id}-{now.date().isoformat()}",
+        title=title,
+        body="\n".join(lines),
+        url=links.item_url(exam.id),  # type: ignore[arg-type]
     )
 
 
@@ -110,6 +145,7 @@ class ReminderService:
             if self._repo.claim_end_warning(study.id, now):  # type: ignore[arg-type]
                 log.info("End warning for study #%s", study.id)
                 notes.append(study_end_notification(study, now))
+        notes.extend(self._exam_alerts(now))
         digest = self._digest(now)
         if digest is not None:
             notes.append(digest)
@@ -118,6 +154,22 @@ class ReminderService:
     def _item(self, item: CalendarItem, now: datetime) -> Notification:
         log.info("Reminder for item #%s", item.id)
         return item_notification(item, now)
+
+    def _exam_alerts(self, now: datetime) -> list[Notification]:
+        """Mỗi ngày một toast cho mỗi ca thi sắp tới (từ 15 ngày trước đến chính ngày thi). Không phụ thuộc công
+        tắc tổng hợp buổi tối: ca thi luôn được nhắc."""
+        if now.time() < EXAM_ALERT_FROM:
+            return []
+        today = now.date().isoformat()
+        notes = []
+        for exam in self._repo.upcoming_exams(now, days=EXAM_ALERT_DAYS):
+            key = EXAM_ALERT_KEY.format(id=exam.id)
+            if self._repo.get_state(key) == today:
+                continue
+            self._repo.set_state(key, today)
+            log.info("Exam alert for #%s (%d days left)", exam.id, exam_days_left(exam, now))
+            notes.append(exam_alert_notification(exam, now))
+        return notes
 
     def _digest(self, now: datetime) -> Notification | None:
         """Toast tổng hợp ngày mai, một lần mỗi ngày, từ giờ cấu hình trở đi (app mở muộn vẫn nhận)."""

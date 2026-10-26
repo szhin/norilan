@@ -130,7 +130,7 @@ def test_cancel_dialog_saves_nothing(window, repo):
     window._exec_dialog = lambda dlg: False
     window.new_deadline()
     window.new_event()
-    assert repo.count_items() == {"deadline": 0, "event": 0, "study": 0, "class": 0}
+    assert repo.count_items() == {"deadline": 0, "event": 0, "study": 0, "class": 0, "exam": 0}
 
 
 def test_delete_asks_for_confirmation(window, repo, prompts_stub):

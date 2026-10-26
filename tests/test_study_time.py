@@ -41,7 +41,7 @@ def test_migration_v4_converts_old_database(tmp_path):
     path = tmp_path / "norilan.db"
     make_v3_db(path)
     conn = connect(path)
-    assert schema_version(conn) == SCHEMA_VERSION == 7
+    assert schema_version(conn) == SCHEMA_VERSION == 8
     repo = Repository(conn)
     lab = repo.get_deadline(1)
     assert lab is not None and (lab.title, lab.priority, lab.subject, lab.remind_before_minutes) == ("Lab 2", 2, "Toán", 30)
@@ -52,7 +52,7 @@ def test_migration_v4_converts_old_database(tmp_path):
     event = repo.get_event(3)
     assert (event.location, event.color) == ("Phòng 1", "green")
     assert repo.subject_colors() == {"Toán": "purple"}
-    assert repo.count_items() == {"deadline": 2, "event": 1, "study": 0, "class": 0}
+    assert repo.count_items() == {"deadline": 2, "event": 1, "study": 0, "class": 0, "exam": 0}
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1          # bật lại sau migrate
     # AUTOINCREMENT giữ nguyên: id mới không trùng id cũ
@@ -119,7 +119,7 @@ def test_restore_old_backup_is_migrated_and_new_backup_has_new_schema(tmp_path):
     repo.add_event(Event("Sẽ bị thay", NOW, NOW + timedelta(hours=1)))
     restore_backup(conn, zip_path, data_dir=tmp_path / "data")
     assert schema_version(conn) == SCHEMA_VERSION
-    assert repo.count_items() == {"deadline": 2, "event": 1, "study": 0, "class": 0}
+    assert repo.count_items() == {"deadline": 2, "event": 1, "study": 0, "class": 0, "exam": 0}
     assert [a.display_name for a in repo.get_deadline(1).attachments] == ["LMS"]
     repo.add_study_time(StudyTime("Học", NOW, NOW + timedelta(hours=1), deadline_id=1))
 

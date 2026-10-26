@@ -273,4 +273,30 @@ class ClassSession:
         return self.course.room if self.course else ""
 
 
-CalendarItem = Deadline | Event | StudyTime | ClassSession
+@dataclass(slots=True)
+class Exam:
+    """Ca thi: môn thi (`title`), giờ bắt đầu, lớp thi và địa điểm thi. Không có giờ kết thúc.
+
+    Là loại mục ưu tiên cao nhất: giao diện luôn làm nổi bật và nhắc mỗi ngày trong 15 ngày trước ngày thi.
+    """
+
+    KIND: ClassVar[str] = "exam"
+
+    title: str
+    starts_at: datetime
+    exam_class: str = ""
+    location: str = ""
+    notes: str = ""
+    remind_before_minutes: int | None = None
+    id: int | None = None
+    reminder_sent_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def validate(self) -> None:
+        if not self.title or not self.title.strip():
+            raise ValidationError(tr("error.title_empty"))
+        _check_remind(self.remind_before_minutes)
+
+
+CalendarItem = Deadline | Event | StudyTime | ClassSession | Exam

@@ -156,7 +156,7 @@ def test_migration_v5_adds_nullable_flag_and_keeps_study_data(tmp_path):
     raw.commit()
     raw.close()
     conn = connect(path)
-    assert schema_version(conn) == SCHEMA_VERSION == 7
+    assert schema_version(conn) == SCHEMA_VERSION == 8
     old = Repository(conn).get_study_time(1)
     assert old.title == "Cũ" and old.end_warned_at is None
     assert list((tmp_path / "backups").glob("truoc-khi-nang-cap-v4-*.zip"))   # tự sao lưu trước khi nâng

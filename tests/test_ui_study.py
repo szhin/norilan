@@ -93,7 +93,7 @@ def test_new_deadline_answer_no_just_closes(window, repo, prompts_stub):
     prompts_stub.study_after = False
     create_deadline(window)
     assert prompts_stub.study_after_asked == 1
-    assert repo.count_items() == {"deadline": 1, "event": 0, "study": 0, "class": 0}
+    assert repo.count_items() == {"deadline": 1, "event": 0, "study": 0, "class": 0, "exam": 0}
     assert window.panel.detail_item_id() == repo.search("Lab 2")[0].id
 
 
@@ -257,10 +257,10 @@ def test_countdown_slot_never_exists_for_deadline_or_event(window, repo):
 
 
 # ------------------------------------------------------------------ Toolbar & phím tắt
-def test_toolbar_has_three_buttons_in_order(window):
+def test_toolbar_has_four_buttons_in_order(window):
     bar = window.findChild(QWidget, "Toolbar")
     texts = [b.text() for b in bar.findChildren(QPushButton) if b.text().startswith("+")]
-    assert texts == ["+ Deadline", "+ Study time", "+ Sự kiện"]
+    assert texts == ["+ Ca thi", "+ Deadline", "+ Study time", "+ Sự kiện"]
 
 
 def test_shortcuts_ctrl_n_and_ctrl_alt_n(window, monkeypatch):
@@ -331,6 +331,6 @@ def test_seed_data_has_all_three_types_and_link(repo):
 
     assert seed_demo(repo, NOW) == 9
     counts = repo.count_items()
-    assert counts == {"deadline": 4, "study": 3, "event": 2, "class": 0}
+    assert counts == {"deadline": 4, "study": 3, "event": 2, "class": 0, "exam": 0}
     linked = [d for d in repo.open_deadlines() if d.study_count]
     assert len(linked) == 1 and linked[0].study_count == 2

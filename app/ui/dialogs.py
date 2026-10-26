@@ -9,6 +9,7 @@ from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QKeySequence, QSh
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QCompleter,
     QDateEdit,
     QDialog,
     QFormLayout,
@@ -37,6 +38,7 @@ from app.models import (
     AttachmentKind,
     Course,
     Event,
+    Exam,
     Priority,
     Deadline,
     DeadlineStatus,
@@ -327,7 +329,7 @@ class _ItemDialog(QDialog):
             return
         super().accept()
 
-    def result_item(self) -> Deadline | Event | StudyTime:  # pragma: no cover – lớp con cài đặt
+    def result_item(self) -> Deadline | Event | StudyTime | Exam:  # pragma: no cover – lớp con cài đặt
         raise NotImplementedError
 
 
@@ -540,6 +542,61 @@ class EventDialog(_ItemDialog):
             notes=self.notes.toPlainText().strip(),
             remind_before_minutes=self.reminder.value(),
             color=self.color.tone(),
+            id=original.id if original else None,
+        )
+
+
+# ------------------------------------------------------------------ Ca thi
+class ExamDialog(_ItemDialog):
+    """Tạo/sửa ca thi: môn thi (ô tên), ngày + giờ bắt đầu, lớp thi, địa điểm thi."""
+
+    def __init__(
+        self, *, exam: Exam | None = None, default_start: datetime | None = None, subjects: list[str] | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(tr("exam.window_edit" if exam else "exam.window_new"), parent)
+        self._original = exam
+        self.title_edit.setPlaceholderText(tr("exam.placeholder"))
+        if subjects:
+            self.title_edit.setCompleter(QCompleter(subjects, self.title_edit))
+
+        self.start = DateTimeRow()
+        self.form.addRow(tr("exam.start"), self.start)
+        self.exam_class = QLineEdit()
+        self.exam_class.setPlaceholderText(tr("exam.class_placeholder"))
+        self.form.addRow(tr("exam.class"), self.exam_class)
+        self.location = QLineEdit()
+        self.location.setPlaceholderText(tr("exam.location_placeholder"))
+        self.form.addRow(tr("exam.location"), self.location)
+        self.reminder = ReminderEdit()
+        self.form.addRow(tr("deadline.remind"), self.reminder)
+        self.notes = QPlainTextEdit()
+        self.notes.setPlaceholderText(tr("exam.notes_placeholder"))
+        self.notes.setFixedHeight(80)
+        self.form.addRow(tr("exam.notes"), self.notes)
+        self._finish(tr("exam.save_edit" if exam else "exam.save_new"))
+        self.resize(520, self.sizeHint().height())
+
+        if exam is not None:
+            self.title_edit.setText(exam.title)
+            self.start.set_value(exam.starts_at)
+            self.exam_class.setText(exam.exam_class)
+            self.location.setText(exam.location)
+            self.reminder.set_value(exam.remind_before_minutes)
+            self.notes.setPlainText(exam.notes)
+        else:
+            self.start.set_value(default_start or datetime.combine(date.today() + timedelta(days=1), time(7, 30)))
+            self.reminder.set_value(60)   # ca thi mới: nhắc trước 1 giờ (bỏ tích được)
+
+    def result_item(self) -> Exam:
+        original = self._original
+        return Exam(
+            title=self.title_edit.text().strip(),
+            starts_at=self.start.value(),
+            exam_class=self.exam_class.text().strip(),
+            location=self.location.text().strip(),
+            notes=self.notes.toPlainText().strip(),
+            remind_before_minutes=self.reminder.value(),
             id=original.id if original else None,
         )
 

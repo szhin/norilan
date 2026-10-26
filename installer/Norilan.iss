@@ -1,6 +1,6 @@
 ; Build: python build_exe.py && iscc installer\Norilan.iss  ->  dist\Norilan-Setup.exe
 #define AppName "Norilan"
-#define AppVersion "1.0.0"
+#define AppVersion "1.1.0"
 #define AppExe "Norilan.exe"
 
 [Setup]

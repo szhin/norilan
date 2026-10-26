@@ -29,7 +29,7 @@ from app.calendar_logic import (
 )
 from app.colors import ColorResolver
 from app.i18n import tr
-from app.models import CalendarItem, Deadline
+from app.models import CalendarItem, Deadline, Exam
 from app.ui.theme import STATE_OWNS_COLOR, apply_tone, current_tokens, repolish
 from app.ui.widgets import Chip, ClickableLabel, set_strike
 
@@ -111,6 +111,7 @@ class DayCell(QFrame):
             if _set_prop(self._weekday, "today", today):
                 repolish(self._weekday)
 
+        items = sorted(items, key=lambda item: not isinstance(item, Exam))   # ca thi luôn nằm trên, không bị '+N'
         visible, hidden = split_overflow(items, self._max)
         while len(self._chips) < len(visible):
             chip = Chip(self)
@@ -127,7 +128,9 @@ class DayCell(QFrame):
         self._more.setText(tr("cell.more", count=hidden))
         self._more.setVisible(hidden > 0)
 
-        if _set_prop(self, "outside", outside) | _set_prop(self, "selected", selected):
+        has_exam = any(isinstance(item, Exam) for item in items)   # ngày có ca thi: cả ô nền đỏ nhạt
+        if (_set_prop(self, "outside", outside) | _set_prop(self, "selected", selected)
+                | _set_prop(self, "exam", has_exam)):
             repolish(self)
         if _set_prop(self._number, "outside", outside) | _set_prop(self._number, "today", today):
             repolish(self._number)
@@ -316,7 +319,7 @@ class DayColumn(QFrame):
             block.context_requested.connect(self.item_context)
             block.show()
             self.blocks.append(block)
-        if _set_prop(self, "selected", selected):
+        if _set_prop(self, "selected", selected) | _set_prop(self, "exam", any(isinstance(i, Exam) for i in items)):
             repolish(self)
         self._now_minute = now.hour * 60 + now.minute if today else None
         self._relayout()

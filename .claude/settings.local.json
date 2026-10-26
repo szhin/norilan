@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -)",
+      "Bash(python \"C:/Users/legion/AppData/Local/Temp/claude/c--Users-legion-Documents-Norilan/daaf5da1-e11c-4f89-8877-7e6aba5ecfdc/scratchpad/edit_ui.py\")",
+      "Bash(python \"C:/Users/legion/AppData/Local/Temp/claude/c--Users-legion-Documents-Norilan/daaf5da1-e11c-4f89-8877-7e6aba5ecfdc/scratchpad/add_i18n.py\")",
+      "Bash(python -m pytest -x -q)",
+      "Bash(python -m pytest -q -x)",
+      "Bash(python -m pytest -q)",
+      "Bash(python -m pytest -q --tb=short)",
+      "Bash(sed -i 's/\"class\": 0}/\"class\": 0, \"exam\": 0}/' tests/test_ui_study.py tests/test_ui_actions.py tests/test_study_time.py)",
+      "Bash(sed -i 's/SCHEMA_VERSION == 7/SCHEMA_VERSION == 8/' tests/test_courses.py tests/test_end_warning.py tests/test_study_time.py)",
+      "Bash(git stash *)",
+      "Bash(python -m pytest -q tests/test_backup_maintenance.py::test_reject_non_backup_and_newer_backup tests/test_ui_gd5.py::test_import_background_downscales_and_rejects_bad_files)",
+      "Bash(python \"C:/Users/legion/AppData/Local/Temp/claude/c--Users-legion-Documents-Norilan/daaf5da1-e11c-4f89-8877-7e6aba5ecfdc/scratchpad/shot.py\")",
+      "Bash(sed -i 's/\"toolbar.new_exam\": \"🎓 + /\"toolbar.new_exam\": \"+ /' app/i18n/*.py && grep -n '\"toolbar.new_exam\"' app/i18n/*.py)",
+      "Bash(python -m pytest -q -p no:faulthandler)",
+      "Bash(python \"C:/Users/legion/AppData/Local/Temp/claude/c--Users-legion-Documents-Norilan/daaf5da1-e11c-4f89-8877-7e6aba5ecfdc/scratchpad/i18n2.py\")"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\legion\\Documents\\Norilan\\app\\i18n"
+    ]
+  }
+}

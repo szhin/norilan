@@ -8,7 +8,7 @@ from datetime import date, datetime, time, timedelta
 from enum import StrEnum
 
 from app.i18n import tr, tr_seq
-from app.models import CalendarItem, ClassSession, Course, Deadline, Event, Priority, StudyTime
+from app.models import CalendarItem, ClassSession, Course, Deadline, Event, Exam, Priority, StudyTime
 
 _RELATIVE = {-1: "relative.yesterday", 0: "relative.today", 1: "relative.tomorrow"}
 
@@ -162,7 +162,10 @@ def chip_text(item: CalendarItem, day: date) -> str:
 
 
 def chip_state(item: CalendarItem, now: datetime) -> str:
-    """Trạng thái hiển thị: 'done' | 'overdue' | 'soon' (Deadline còn <24h) | 'high' | 'normal'."""
+    """Trạng thái hiển thị: 'done' | 'overdue' | 'soon' (Deadline còn <24h) | 'high' | 'exam' (ca thi chưa qua)
+    | 'normal'."""
+    if isinstance(item, Exam):
+        return "exam" if now < item.starts_at + EXAM_ACTIVE else "normal"
     if isinstance(item, Deadline):
         if item.is_done:
             return "done"
@@ -206,7 +209,7 @@ def time_left_text(deadline: Deadline, now: datetime) -> str:
 
 
 # Biểu tượng theo loại (Deadline nổi bật hơn Event/Study time: có icon, viền, đếm Study time)
-KIND_ICONS = {Deadline.KIND: "⏳", StudyTime.KIND: "📖", ClassSession.KIND: "🏫", Event.KIND: "📅"}
+KIND_ICONS = {Deadline.KIND: "⏳", StudyTime.KIND: "📖", ClassSession.KIND: "🏫", Event.KIND: "📅", Exam.KIND: "🎓"}
 
 
 def kind_icon(item: CalendarItem) -> str:
@@ -217,6 +220,8 @@ def chip_label(item: CalendarItem, day: date) -> str:
     """Chữ trên chip lịch: '⏳ 09:00 Nộp báo cáo 📖2' (Deadline), '📖 19:00 Học Anh' (Study time),
     '🏫 07:30 Giải tích' (buổi học), 'Họp' như cũ (Event)."""
     text = chip_text(item, day)
+    if isinstance(item, Exam):
+        return f"{kind_icon(item)} {item.starts_at:%H:%M} {tr('exam.chip', title=item.title)}"
     if isinstance(item, Deadline):
         return f"{kind_icon(item)} {text} 📖{item.study_count}"
     if isinstance(item, (StudyTime, ClassSession)):
@@ -228,6 +233,8 @@ def time_text(item: CalendarItem, *, with_date: bool = False) -> str:
     """'Hạn 23:59' | '19:00 – 20:30' | '23:00 13/10 – 01:00 14/10' (Event và Study time cùng dạng)."""
     if isinstance(item, Deadline):
         return tr("time.due", time=f"{item.due_at:%H:%M}") + (f" {day_month_text(item.due_at)}" if with_date else "")
+    if isinstance(item, Exam):
+        return f"{item.starts_at:%H:%M}" + (f" {day_month_text(item.starts_at)}" if with_date else "")
     if item.starts_at.date() != item.ends_at.date():
         return (f"{item.starts_at:%H:%M} {day_month_text(item.starts_at)} – "
                 f"{item.ends_at:%H:%M} {day_month_text(item.ends_at)}")
@@ -250,6 +257,13 @@ def item_meta(item: CalendarItem, now: datetime, *, with_date: bool = False, sho
                 parts.append(left)
         if item.attachments:
             parts.append(f"📎{len(item.attachments)}")
+    elif isinstance(item, Exam):
+        if item.exam_class:
+            parts.append(f"{tr('field.exam_class')}: {item.exam_class}")
+        if item.location:
+            parts.append(f"📍 {item.location}")
+        if item.starts_at + EXAM_ACTIVE > now:
+            parts.append(exam_when_text(item, now))
     elif isinstance(item, StudyTime):
         if item.subject and show_subject:
             parts.append(item.subject)
@@ -285,7 +299,12 @@ def block_span(item: CalendarItem, day: date) -> tuple[int, int]:
     """
     midnight = datetime.combine(day, time())
     start = max(0, math.floor((item.starts_at - midnight).total_seconds() / 60))
-    end = start if isinstance(item, Deadline) else min(DAY_MINUTES, math.ceil((item.ends_at - midnight).total_seconds() / 60))
+    if isinstance(item, Deadline):
+        end = start
+    elif isinstance(item, Exam):
+        end = min(DAY_MINUTES, start + EXAM_BLOCK_MINUTES)
+    else:
+        end = min(DAY_MINUTES, math.ceil((item.ends_at - midnight).total_seconds() / 60))
     end = max(end, start + MIN_BLOCK_MINUTES)
     if end > DAY_MINUTES:
         start, end = DAY_MINUTES - MIN_BLOCK_MINUTES, DAY_MINUTES
@@ -326,6 +345,10 @@ def block_text(item: CalendarItem, day: date) -> str:
     """
     if isinstance(item, Deadline):
         return f"{kind_icon(item)} {item.title}"
+    if isinstance(item, Exam):
+        title = f"{kind_icon(item)} {tr('exam.chip', title=item.title)}"
+        details = [time_text(item), item.exam_class, item.location]
+        return title + "\n" + " · ".join(d for d in details if d)
     title = item.title if isinstance(item, Event) else f"{kind_icon(item)} {item.title}"
     details = [time_text(item)]
     if isinstance(item, ClassSession):
@@ -333,6 +356,38 @@ def block_text(item: CalendarItem, day: date) -> str:
     elif isinstance(item, Event):
         details.append(item.location)
     return f"{title}\n{' · '.join(d for d in details if d)}"
+
+
+# ------------------------------------------------------------------ Ca thi
+EXAM_ACTIVE = timedelta(hours=2)    # ca thi còn 'đang diễn ra' trong khoảng này kể từ giờ bắt đầu
+EXAM_BLOCK_MINUTES = 120            # chiều cao khối ca thi trên lưới giờ
+EXAM_ALERT_DAYS = 15                # nhắc mỗi ngày trong 15 ngày trước ngày thi
+
+
+def exam_days_left(exam: Exam, now: datetime) -> int:
+    """Số ngày lịch từ hôm nay tới ngày thi (0 = hôm nay)."""
+    return (exam.starts_at.date() - now.date()).days
+
+
+def exam_when_text(exam: Exam, now: datetime) -> str:
+    """'HÔM NAY THI' | 'NGÀY MAI THI' | 'THI SAU 5 NGÀY'."""
+    days = exam_days_left(exam, now)
+    if days <= 0:
+        return tr("exam.today")
+    if days == 1:
+        return tr("exam.tomorrow")
+    return tr("exam.in_days", count=days, days=days)
+
+
+def exam_banner_text(exam: Exam, now: datetime) -> str:
+    """Một dòng trên banner: '🚨 HÔM NAY THI · Toán · 08:00 12/11 · Lớp thi: CNTT1 · 📍 A2.301'."""
+    icon = "🚨" if exam_days_left(exam, now) <= 1 else "🎓"
+    parts = [f"{icon} {exam_when_text(exam, now)}", exam.title, f"{exam.starts_at:%H:%M} {day_month_text(exam.starts_at)}"]
+    if exam.exam_class:
+        parts.append(f"{tr('field.exam_class')}: {exam.exam_class}")
+    if exam.location:
+        parts.append(f"📍 {exam.location}")
+    return " · ".join(parts)
 
 
 # ------------------------------------------------------------------ Thời khoá biểu
