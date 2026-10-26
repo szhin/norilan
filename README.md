@@ -31,38 +31,37 @@
 
 ## 🖼️ Giao diện
 
-### Màn hình chính — Lịch tháng
+### Màn hình chính — Lịch tuần
 
 ![Màn hình chính Norilan](docs/screenshots/01_main.png)
 
-> Lịch tháng với ảnh nền mờ đẹp. Sidebar trái lọc nhanh: **Hôm nay / Ngày mai / Sắp tới / Quá hạn**.
-> Bấm vào sự kiện để xem chi tiết ngay bên phải mà không cần mở cửa sổ mới.
+> Lịch tuần/tháng/ngày với ảnh nền mờ đẹp. Sidebar trái lọc nhanh: **Hôm nay / Ngày mai / Sắp tới / Lịch thi / Quá hạn**.
+> Bấm vào mục để xem chi tiết ngay bên phải (hạn nộp, trạng thái, ưu tiên, đính kèm, *Study time liên kết*) mà không cần mở cửa sổ mới.
+> Banner đỏ phía trên đếm ngược tới kỳ thi gần nhất.
 
 ---
 
-### Tạo Sự kiện mới
+### Tạo Deadline — Có đính kèm file
 
-![Tạo sự kiện](docs/screenshots/02_create_event.png)
+![Tạo deadline với đính kèm](docs/screenshots/04_create_deadline.png)
 
-> Điền tên, chọn thời gian bắt đầu–kết thúc, địa điểm, màu sắc và bật nhắc nhở.
-> Bấm **Tạo sự kiện** để lưu.
+> Đặt hạn nộp, trạng thái, ưu tiên, môn học và **đính kèm tài liệu học tập** (file, thư mục hoặc link).
+> Tích ô *"Lưu bản sao file vào Norilan"* để file vẫn mở được dù file gốc bị xoá hay di chuyển.
 
 ---
 
-### Deadline kết hợp Study time
+### Thêm Deadline từ ảnh
 
-![Tạo Study time cho một Deadline](docs/screenshots/06_deadline_study_time.png)
+![Thêm deadline từ ảnh](docs/screenshots/05_deadline_from_image.png)
 
-> Từ một **Deadline** (panel phải), bấm **+ Thêm Study time**: hộp thoại mở sẵn với cùng tiêu đề, đã liên kết với deadline
-> và điền sẵn môn học. Phần *Study time liên kết* bên dưới liệt kê các buổi đã đặt (bấm để mở); chưa có buổi nào thì hiện
-> nút thêm nhanh. Trên lịch và danh sách, Deadline có biểu tượng ⏳, chữ *còn …* (đổi màu cảnh báo khi dưới 24 giờ) và
-> huy hiệu 📖 đếm số Study time đã đặt (0 được tô nổi bật để nhắc bạn dành thời gian làm).
+> Kéo-thả, dán (Ctrl+V) hoặc chọn ảnh chụp danh sách deadline; Norilan đọc nội dung bằng khóa API của bạn (Gemini hoặc Claude)
+> và cho bạn xem, sửa lại trước khi lưu. Khóa chỉ lưu trên máy này.
 
 ---
 
 ### Đồng hồ đếm ngược Study time
 
-![Đếm ngược Study time dạng phóng to](docs/screenshots/07_countdown_overlay.png)
+![Đếm ngược Study time dạng phóng to](docs/screenshots/03_countdown_overlay.png)
 
 > Bấm vào đồng hồ nhỏ dưới chi tiết Study time để phóng to: chữ số lớn, tên, khoảng giờ, thanh tiến độ.
 > Dưới 10 phút chữ số đổi màu cảnh báo và Norilan gửi toast nhắc sắp hết giờ. Đóng bằng `Esc`, nút ✕ hoặc bấm nền mờ.
@@ -71,28 +70,10 @@
 
 ### Cài đặt
 
-![Cài đặt](docs/screenshots/03_settings.png)
+![Cài đặt](docs/screenshots/02_settings.png)
 
-> Tuỳ chỉnh đầy đủ: chủ đề sáng/tối, màu nhấn, ảnh nền (ảnh được copy vào Norilan nên xoá file gốc vẫn không sao),
+> Tuỳ chỉnh đầy đủ: ngôn ngữ, chủ đề sáng/tối, màu nhấn, ảnh nền (ảnh được copy vào Norilan nên xoá file gốc vẫn không sao),
 > màu theo môn học, thời gian nhắc tổng hợp và dọn dẹp tự động.
-
----
-
-### Tạo Deadline — Có đính kèm file
-
-![Tạo deadline với đính kèm](docs/screenshots/04_create_task.png)
-
-> Đặt hạn nộp, trạng thái, ưu tiên, môn học và **đính kèm tài liệu học tập**.
-> Tích ô *"Lưu bản sao file vào Norilan"* để file vẫn mở được dù file gốc bị xoá hay di chuyển.
-
----
-
-### Chi tiết Deadline — Mở file đính kèm
-
-![Chi tiết deadline và mở file](docs/screenshots/05_task_detail.png)
-
-> Bấm tên file để **mở file ngay lập tức** bằng ứng dụng mặc định.
-> Hover chuột xem đường dẫn đầy đủ. Bấm biểu tượng 📁 để mở thư mục chứa file trong Explorer.
 
 ---
 
