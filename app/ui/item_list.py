@@ -5,7 +5,7 @@ from datetime import date, datetime
 
 from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtGui import QContextMenuEvent, QMouseEvent
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from app.calendar_logic import chip_state, group_label, item_meta, kind_icon
 from app.colors import ColorResolver
@@ -51,7 +51,7 @@ class ItemCard(QFrame):
         set_strike(self.title, state == "done")
         title_row = QHBoxLayout()
         title_row.setSpacing(6)
-        self.icon = QLabel(kind_icon(item), objectName="KindIcon")
+        self.icon = QLabel("✅" if state == "done" else kind_icon(item), objectName="KindIcon")
         title_row.addWidget(self.icon)
         title_row.addWidget(self.title, 1)
         self.study_badge: QLabel | None = None
@@ -77,6 +77,11 @@ class ItemCard(QFrame):
         meta_row.addWidget(meta, 1)
         column.addLayout(meta_row)
         layout.addLayout(column, 1)
+        if state == "done":
+            # Làm mờ cả thẻ để việc đã xong lùi hẳn về nền, dễ phân biệt với việc còn lại.
+            effect = QGraphicsOpacityEffect(self)
+            effect.setOpacity(0.5)
+            self.setGraphicsEffect(effect)
 
     def set_selected(self, selected: bool) -> None:
         if self.property("selected") != selected:
