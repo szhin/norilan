@@ -57,6 +57,14 @@ QPushButton#SidebarAction { background: transparent; border: none; border-radius
     padding: 6px 10px; color: $text_muted; }
 QPushButton#SidebarAction:hover { background: $hover; color: $text; }
 #SidebarSection { color: $text_faint; font-size: 11px; font-weight: 600; padding: 12px 10px 4px 10px; }
+QPushButton#CourseButton { background: transparent; border: none; border-radius: 6px; text-align: left;
+    min-height: 44px; padding: 0px; }
+QPushButton#CourseButton:hover { background: $hover; }
+QPushButton#CourseButton:checked { background: $selected; }
+#CourseName { background: transparent; }
+#CourseMeta { background: transparent; color: $text_muted; font-size: 11px; }
+QPushButton#DayToggle { min-width: 34px; padding: 4px 0px; border-radius: 6px; }
+QPushButton#DayToggle:checked { background: $accent; color: $accent_text; border-color: $accent; font-weight: 600; }
 
 /* ---- Toolbar ---- */
 #Toolbar { background: $surface_bar; border: none; border-bottom: 1px solid $border; }
@@ -95,6 +103,12 @@ $tone_rules
 #Chip[kind="deadline"] { font-weight: 600; }
 #Chip[kind="deadline"][zero="true"] { border: 1px dashed $warn_fg; }
 #Chip[state="done"] { background: $done_bg; color: $done_fg; }
+#Chip[block="true"] { padding: 3px 6px; border-radius: 6px; }
+#Chip[block="true"][selected="true"] { border: 2px solid $accent; }
+#GridHeader { background: $surface_bar; border: none; border-bottom: 1px solid $border; }
+#GridGutter { background: $surface_cell; border: none; border-right: 1px solid $border; }
+#GridDayHeader { background: transparent; border: none; border-radius: 6px; }
+#GridDayHeader:hover { background: $hover; }
 #MoreLabel { color: $text_muted; font-size: 11px; font-weight: 600; padding: 0px 6px; }
 #MoreLabel:hover { color: $accent; }
 
@@ -137,6 +151,7 @@ QPushButton#LinkButton:hover { color: $accent; }
 #LinkedCard { background: $outside_bg; border: 1px solid $border; border-radius: 8px; }
 #LinkedCard:hover { border-color: $accent; }
 #StudyEmpty { color: $text_faint; }
+#AutoDeleteNote { color: $warn_fg; font-size: 12px; }
 
 /* ---- Đếm ngược Study time ---- */
 #CountdownTimer { background: $outside_bg; border: 1px solid $border; border-radius: 8px; }

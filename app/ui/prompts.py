@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QStandardPaths
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QColorDialog, QDialog, QFileDialog, QInputDialog, QMessageBox, QWidget
+from PySide6.QtWidgets import QColorDialog, QDialog, QFileDialog, QInputDialog, QLineEdit, QMessageBox, QWidget
 
 from app import APP_NAME
 from app.files import nearest_existing_dir
@@ -35,6 +35,48 @@ def pick_files(parent: QWidget | None) -> list[str]:
     if paths:
         _remember(paths[0])
     return paths
+
+
+def pick_image_files(parent: QWidget | None) -> list[str]:
+    """Chọn một hoặc nhiều ảnh (để đọc deadline từ ảnh)."""
+    from app.ui.background import image_filter
+
+    paths, _ = QFileDialog.getOpenFileNames(parent, tr("aiimport.pick_files"), _start_dir(), image_filter())
+    if paths:
+        _remember(paths[0])
+    return paths
+
+
+def choose_deadline_source(parent: QWidget | None) -> str | None:
+    """Bấm thêm Deadline: 'manual' (nhập tay như trước) | 'image' (từ ảnh) | None nếu đóng hộp thoại."""
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.NoIcon)
+    box.setWindowTitle(f"{tr('deadline_source.title')} – {APP_NAME}")
+    box.setText(tr("deadline_source.text"))
+    box.setInformativeText(tr("deadline_source.image_hint"))
+    manual = box.addButton(tr("deadline_source.manual"), QMessageBox.ButtonRole.AcceptRole)
+    image = box.addButton(tr("deadline_source.image"), QMessageBox.ButtonRole.AcceptRole)
+    box.addButton(tr("common.cancel"), QMessageBox.ButtonRole.RejectRole)
+    box.setDefaultButton(manual)
+    box.exec()
+    clicked = box.clickedButton()
+    if clicked is manual:
+        return "manual"
+    if clicked is image:
+        return "image"
+    return None
+
+
+def edit_api_key(parent: QWidget | None) -> bool:
+    """Hỏi và lưu khóa API (Gemini hoặc Claude). Ô trống = xoá khóa. Trả về True nếu người dùng bấm OK."""
+    from app import ai_import
+    from app.ui.ai_import_dialog import ApiKeyDialog
+
+    dialog = ApiKeyDialog(ai_import.load_api_key(), parent)
+    if dialog.exec() != QDialog.DialogCode.Accepted:
+        return False
+    ai_import.save_api_key(dialog.key())
+    return True
 
 
 def pick_folder(parent: QWidget | None) -> str | None:
@@ -168,6 +210,25 @@ def ask_delete_deadline_links(parent: QWidget | None, title: str, count: int) ->
         return "delete"
     if clicked is unlink:
         return "unlink"
+    return "cancel"
+
+
+def ask_delete_class(parent: QWidget | None, title: str) -> str:
+    """Xoá một buổi học (lặp hằng tuần): 'Chỉ buổi này' / 'Cả môn học' → 'skip' | 'course' | 'cancel'."""
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Question)
+    box.setWindowTitle(tr("delete.class_title"))
+    box.setText(tr("delete.class_text", title=title))
+    skip = box.addButton(tr("delete.class_skip"), QMessageBox.ButtonRole.AcceptRole)
+    course = box.addButton(tr("delete.class_course"), QMessageBox.ButtonRole.DestructiveRole)
+    cancel = box.addButton(tr("common.cancel"), QMessageBox.ButtonRole.RejectRole)
+    box.setDefaultButton(cancel)
+    box.exec()
+    clicked = box.clickedButton()
+    if clicked is skip:
+        return "skip"
+    if clicked is course:
+        return "course"
     return "cancel"
 
 

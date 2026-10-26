@@ -253,7 +253,7 @@ def test_no_language_misses_a_key_that_vi_has(code):
 NEW_KEY_PREFIXES = ("study.", "badge.", "panel.study_", "panel.add_study", "panel.linked_deadline", "left.",
                     "delete.links_", "delete.study_", "prompt.study_after_", "toolbar.new_study", "notify.study",
                     "error.study_", "common.yes", "common.no", "kind.study", "countdown.", "overlay.",
-                    "notify.study_end")
+                    "notify.study_end", "autoclean.", "autodelete.", "settings.purge_")
 # Thuật ngữ được chủ ý dùng chung giữa hai ngôn ngữ (vi và en cùng dùng "Deadline" / "Study time"; "No" es = en)
 SHARED_WITH_VI = {"kind.study", "toolbar.new_study", "study.deadline", "prompt.study_after_title", "overlay.deadline"}
 SHARED_WITH_EN = {("es", "common.no")}

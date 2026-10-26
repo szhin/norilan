@@ -1,7 +1,7 @@
 """Panel bên phải: danh sách mục (của một ngày hoặc một mục nhanh) và trang chi tiết mục."""
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtGui import QMouseEvent
@@ -22,14 +22,17 @@ from PySide6.QtWidgets import (
 
 from app.countdown import CountdownState, Phase, format_hms, state as countdown_state
 from app.calendar_logic import (
-    chip_state, day_heading, day_month_text, format_minutes, item_meta, kind_icon, time_left_text, time_text,
+    chip_state, course_period_text, course_schedule_text, day_heading, day_month_text, format_minutes, item_meta,
+    kind_icon, round_for_display, time_left_text, time_text,
 )
 from app.colors import ColorResolver
 from app.files import is_missing
 from app.i18n import tr
-from app.models import Attachment, AttachmentKind, CalendarItem, Deadline, DeadlineStatus, StudyTime
+from app.models import (
+    Attachment, AttachmentKind, CalendarItem, ClassSession, Course, Deadline, DeadlineStatus, StudyTime,
+)
 from app.ui.dialogs import ATTACHMENT_ICON
-from app.ui.item_list import ItemListWidget
+from app.ui.item_list import ItemCard, ItemListWidget
 from app.ui.theme import apply_tone, repolish
 from app.ui.widgets import ElidedButton, ElidedLabel
 
@@ -38,7 +41,16 @@ from app.ui.widgets import ElidedButton, ElidedLabel
 _FIELD_ICONS = {
     "due": "🗓", "status": "◉", "priority": "⚑", "subject": "🏷", "remind": "⏰",
     "notes": "≡", "attachments": "📎", "time": "🕒", "location": "📍",
+    "room": "🚪", "schedule": "🔁", "period": "📆", "next": "⏭",
 }
+
+
+def _field_label(key: str) -> QLabel:
+    """Nhãn thuộc tính có biểu tượng phía trước, như bảng thuộc tính của Notion."""
+    text = tr(f"field.{key}")
+    label = QLabel(f"{_FIELD_ICONS.get(key, '•')}   {text}", objectName="FieldLabel")
+    label.setProperty("field", text)
+    return label
 
 
 class AttachmentRow(QFrame):
@@ -141,6 +153,7 @@ class DetailView(QWidget):
     add_study_requested = Signal(int)           # deadline_id: thêm Study time điền sẵn từ deadline này
     open_item_requested = Signal(int)           # mở một mục liên kết (Study time / Deadline)
     countdown_clicked = Signal(int)             # study_id: phóng to đồng hồ đếm ngược
+    open_course_requested = Signal(int)         # course_id: mở trang môn học từ một buổi học
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -212,6 +225,8 @@ class DetailView(QWidget):
         self.countdown_slot: QWidget | None = None
         self.countdown_widget: CountdownWidget | None = None
         self.linked_card: QFrame | None = None
+        self.course_card: QFrame | None = None
+        self.auto_delete_note: QLabel | None = None
 
     def _build_study_section(self) -> QWidget:
         box = QWidget(objectName="StudySection")
@@ -276,6 +291,25 @@ class DetailView(QWidget):
         self.countdown_slot = None
         self.countdown_widget = None
         self.linked_card = None
+        self.course_card = None
+        self.auto_delete_note = None
+
+    def set_auto_delete_note(self, remaining: timedelta | None) -> None:
+        """Dòng 'Tự xoá sau …' (chỉ Deadline; None = ẩn). Gọi lại mỗi tick để số liệu đếm lùi."""
+        if remaining is None:
+            if self.auto_delete_note is not None:
+                self.auto_delete_note.hide()
+                self._extras.removeWidget(self.auto_delete_note)
+                self.auto_delete_note.deleteLater()
+                self.auto_delete_note = None
+            return
+        minutes = max(1, -(-int(remaining.total_seconds()) // 60))
+        text = tr("autodelete.left", span=format_minutes(round_for_display(minutes)))
+        if self.auto_delete_note is None:
+            self.auto_delete_note = QLabel(objectName="AutoDeleteNote")
+            self.auto_delete_note.setWordWrap(True)
+            self._extras.addWidget(self.auto_delete_note)
+        self.auto_delete_note.setText(text)
 
     def update_countdown(self, now: datetime) -> None:
         if self.countdown_widget is not None:
@@ -298,9 +332,26 @@ class DetailView(QWidget):
         card.clicked.connect(lambda i=deadline.id: self.open_item_requested.emit(i))
         return card
 
+    def _course_card(self, course: Course) -> QFrame:
+        card = _ClickFrame(objectName="LinkedCard")
+        card.setCursor(Qt.CursorShape.PointingHandCursor)
+        card.setToolTip(tr("course.open_tooltip"))
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(2)
+        title = ElidedLabel(f"🏫  {course.name}")
+        title.setObjectName("CardTitle")
+        meta = ElidedLabel(f"{course_schedule_text(course)} · {course_period_text(course)}")
+        meta.setObjectName("CardMeta")
+        layout.addWidget(title)
+        layout.addWidget(meta)
+        card.clicked.connect(lambda i=course.id: self.open_course_requested.emit(i))
+        return card
+
     def show_item(
         self, item: CalendarItem, now: datetime, colors: ColorResolver | None = None, *,
         linked_deadline: Deadline | None = None, study_times: list[StudyTime] | None = None,
+        auto_delete_in: timedelta | None = None,
     ) -> None:
         colors = colors or ColorResolver()
         self.item_id = item.id
@@ -315,6 +366,7 @@ class DetailView(QWidget):
         if isinstance(item, Deadline):
             self._fill_study_section(study_times or [])
             self._split.setSizes([3, 2])
+            self.set_auto_delete_note(auto_delete_in)
 
         if isinstance(item, Deadline):
             due_text = f"{item.due_at:%H:%M} · {day_heading(item.due_at.date())}"
@@ -357,6 +409,16 @@ class DetailView(QWidget):
             self.countdown_widget.clicked.connect(lambda i=item.id: self.countdown_clicked.emit(i))
             slot_layout.addWidget(self.countdown_widget)
             self._extras.addWidget(self.countdown_slot)
+        elif isinstance(item, ClassSession):
+            self._row("time", f"{time_text(item)} · {day_heading(item.starts_at.date())}")
+            self._row("room", item.room or "—")
+            self._row("location", item.location or "—")
+            self._row("remind", format_minutes(item.remind_before_minutes))
+            self._row("notes", item.notes or "—")
+            if item.course is not None:
+                self._extras.addWidget(QLabel(tr("panel.linked_course"), objectName="SectionLabel"))
+                self.course_card = self._course_card(item.course)
+                self._extras.addWidget(self.course_card)
         else:
             self._row("time", f"{time_text(item)} · {day_heading(item.starts_at.date())}")
             self._row("location", item.location or "—")
@@ -375,11 +437,7 @@ class DetailView(QWidget):
 
     # --- dựng từng phần
     def _label(self, key: str) -> QLabel:
-        """Nhãn thuộc tính có biểu tượng phía trước, như bảng thuộc tính của Notion."""
-        text = tr(f"field.{key}")
-        label = QLabel(f"{_FIELD_ICONS.get(key, '•')}   {text}", objectName="FieldLabel")
-        label.setProperty("field", text)
-        return label
+        return _field_label(key)
 
     def _row(self, key: str, value: str, *, state: str | None = None) -> None:
         field = QLabel(value, objectName="FieldValue")
@@ -415,8 +473,152 @@ class DetailView(QWidget):
         return box
 
 
+class CourseView(QWidget):
+    """Trang một môn học: lịch học, phòng, địa điểm, thời gian học, buổi tới; bên dưới là các Deadline và
+    Study time ghi cùng môn (liên kết theo tên môn), mỗi phần có nút ＋ để thêm mục điền sẵn môn này."""
+
+    back_requested = Signal()
+    edit_requested = Signal(int)            # course_id
+    delete_requested = Signal(int)          # course_id
+    item_clicked = Signal(int)              # mở Deadline / Study time liên kết
+    item_context = Signal(int, QPoint)
+    add_deadline_requested = Signal(str)    # tên môn
+    add_study_requested = Signal(str)       # tên môn
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.course: Course | None = None
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(8)
+
+        top = QHBoxLayout()
+        back = QPushButton(tr("detail.back"), objectName="LinkButton")
+        back.setCursor(Qt.CursorShape.PointingHandCursor)
+        back.setToolTip(tr("detail.back_tooltip"))
+        back.clicked.connect(self.back_requested)
+        top.addWidget(back)
+        top.addStretch(1)
+        edit = QPushButton(tr("detail.edit"))
+        edit.setToolTip(tr("detail.edit_tooltip"))
+        edit.clicked.connect(lambda: self.course and self.edit_requested.emit(self.course.id))
+        delete = QPushButton("🗑", objectName="DangerButton")
+        delete.setToolTip(tr("detail.delete_tooltip"))
+        delete.clicked.connect(lambda: self.course and self.delete_requested.emit(self.course.id))
+        top.addWidget(edit)
+        top.addWidget(delete)
+        outer.addLayout(top)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        body = QWidget()
+        self._body = QVBoxLayout(body)
+        self._body.setContentsMargins(0, 4, 6, 0)
+        self._body.setSpacing(10)
+        self._pill = QLabel(tr("kind.course"), objectName="Pill")
+        self._title = QLabel(objectName="DetailTitle")
+        self._title.setWordWrap(True)
+        self._title.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._body.addWidget(self._pill, 0, Qt.AlignmentFlag.AlignLeft)
+        self._body.addWidget(self._title)
+        form_host = QWidget()
+        self._form = QFormLayout(form_host)
+        self._form.setContentsMargins(0, 6, 0, 0)
+        self._form.setHorizontalSpacing(14)
+        self._form.setVerticalSpacing(10)
+        self._form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self._form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.DontWrapRows)
+        self._body.addWidget(form_host)
+
+        self._deadline_header, self._deadline_list = self._section(lambda: self._emit_add(self.add_deadline_requested))
+        self._study_header, self._study_list = self._section(lambda: self._emit_add(self.add_study_requested))
+        self._body.addStretch(1)
+        scroll.setWidget(body)
+        outer.addWidget(scroll, 1)
+        self.cards: list[ItemCard] = []
+
+    def _section(self, on_add) -> tuple[QLabel, QVBoxLayout]:  # type: ignore[no-untyped-def]
+        header = QHBoxLayout()
+        label = QLabel(objectName="SectionLabel")
+        header.addWidget(label, 1)
+        add = QPushButton("＋", objectName="IconButton")
+        add.setCursor(Qt.CursorShape.PointingHandCursor)
+        add.clicked.connect(on_add)
+        header.addWidget(add)
+        self._body.addSpacing(4)
+        self._body.addLayout(header)
+        items = QVBoxLayout()
+        items.setSpacing(6)
+        self._body.addLayout(items)
+        return label, items
+
+    def _emit_add(self, signal) -> None:  # type: ignore[no-untyped-def]
+        if self.course is not None:
+            signal.emit(self.course.name)
+
+    def show_course(
+        self, course: Course, *, now: datetime, next_session: ClassSession | None = None,
+        deadlines: list[CalendarItem] | None = None, studies: list[CalendarItem] | None = None,
+        colors: ColorResolver | None = None,
+    ) -> None:
+        colors = colors or ColorResolver()
+        self.course = course
+        apply_tone(self._pill, colors.subject_tone(course.name))
+        self._title.setText(course.name)
+        while self._form.rowCount():
+            self._form.removeRow(0)
+        self._row("schedule", course_schedule_text(course))
+        self._row("room", course.room or "—")
+        self._row("location", course.location or "—")
+        self._row("period", course_period_text(course))
+        if next_session is not None:
+            self._row("next", f"{time_text(next_session)} · {day_heading(next_session.starts_at.date())}")
+        else:
+            self._row("next", tr("course.ended"))
+        self._row("remind", format_minutes(course.remind_before_minutes))
+        self._row("notes", course.notes or "—")
+
+        self.cards = []
+        deadlines, studies = deadlines or [], studies or []
+        self._deadline_header.setText(tr("course.deadlines", count=len(deadlines)))
+        self._fill(self._deadline_list, deadlines, tr("course.none_deadlines"), now, colors)
+        self._study_header.setText(tr("course.studies", count=len(studies)))
+        self._fill(self._study_list, studies, tr("course.none_studies"), now, colors)
+
+    def _fill(self, layout: QVBoxLayout, items: list[CalendarItem], empty: str, now: datetime,
+              colors: ColorResolver) -> None:
+        while (child := layout.takeAt(0)) is not None:
+            if (widget := child.widget()) is not None:
+                widget.hide()
+                widget.deleteLater()
+        if not items:
+            layout.addWidget(QLabel(empty, objectName="StudyEmpty"))
+        for item in items:
+            card = ItemCard(item, now=now, with_date=True, colors=colors)
+            card.clicked.connect(self.item_clicked)
+            card.context_requested.connect(self.item_context)
+            layout.addWidget(card)
+            self.cards.append(card)
+
+    def field_values(self) -> dict[str, str]:
+        """{nhãn đã dịch: giá trị} (dùng cho test)."""
+        values: dict[str, str] = {}
+        for row in range(self._form.rowCount()):
+            label = self._form.itemAt(row, QFormLayout.ItemRole.LabelRole).widget()
+            field = self._form.itemAt(row, QFormLayout.ItemRole.FieldRole).widget()
+            values[label.property("field")] = field.text()
+        return values
+
+    def _row(self, key: str, value: str) -> None:
+        field = QLabel(value, objectName="FieldValue")
+        field.setWordWrap(True)
+        field.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._form.addRow(_field_label(key), field)
+
+
 class SidePanel(QFrame):
-    """Trang 0: danh sách; trang 1: chi tiết."""
+    """Trang 0: danh sách; trang 1: chi tiết mục; trang 2: môn học."""
 
     item_clicked = Signal(int)
     item_context = Signal(int, QPoint)
@@ -467,6 +669,12 @@ class SidePanel(QFrame):
         self.detail.back_requested.connect(self.show_list_page)
         self._stack.addWidget(self.detail)
 
+        self.course_view = CourseView()
+        self.course_view.back_requested.connect(self.show_list_page)
+        self.course_view.item_clicked.connect(self.item_clicked)
+        self.course_view.item_context.connect(self.item_context)
+        self._stack.addWidget(self.course_view)
+
     # --- API
     def show_items(
         self, title: str, subtitle: str, items: list[CalendarItem], *,
@@ -482,11 +690,30 @@ class SidePanel(QFrame):
     def show_detail(
         self, item: CalendarItem, now: datetime, colors: ColorResolver | None = None, *,
         linked_deadline: Deadline | None = None, study_times: list[StudyTime] | None = None,
+        auto_delete_in: timedelta | None = None,
     ) -> None:
-        self.detail.show_item(item, now, colors, linked_deadline=linked_deadline, study_times=study_times)
+        self.detail.show_item(item, now, colors, linked_deadline=linked_deadline, study_times=study_times,
+                              auto_delete_in=auto_delete_in)
         self.list.set_selected(item.id)
         self._stack.setCurrentWidget(self.detail)
         self.page_changed.emit()
+
+    def show_course(
+        self, course: Course, *, now: datetime, next_session: ClassSession | None = None,
+        deadlines: list[CalendarItem] | None = None, studies: list[CalendarItem] | None = None,
+        colors: ColorResolver | None = None,
+    ) -> None:
+        self.course_view.show_course(course, now=now, next_session=next_session, deadlines=deadlines,
+                                     studies=studies, colors=colors)
+        self.list.set_selected(None)
+        self._stack.setCurrentWidget(self.course_view)
+        self.page_changed.emit()
+
+    def course_id(self) -> int | None:
+        """Môn đang mở ở trang môn học (None nếu panel đang ở trang khác)."""
+        if self._stack.currentWidget() is self.course_view and self.course_view.course is not None:
+            return self.course_view.course.id
+        return None
 
     def show_list_page(self) -> None:
         self.list.set_selected(None)

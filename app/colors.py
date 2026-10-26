@@ -8,7 +8,7 @@ from collections.abc import Iterable
 
 from app.db import fold_text
 from app.i18n import tr
-from app.models import CalendarItem, Deadline, Event, StudyTime
+from app.models import CalendarItem, ClassSession, Deadline, Event, StudyTime
 
 # tone → (nền chip, chữ chip) cho theme sáng / tối – theo bảng màu thẻ của Notion
 LIGHT_TONES: dict[str, tuple[str, str]] = {
@@ -40,6 +40,7 @@ AUTO_TONES: tuple[str, ...] = ("blue", "green", "purple", "orange", "pink", "yel
 DEFAULT_DEADLINE_TONE = "blue"
 DEFAULT_EVENT_TONE = "orange"
 DEFAULT_STUDY_TONE = "green"
+DEFAULT_CLASS_TONE = "purple"
 NO_SUBJECT_TONE = "gray"
 COLOR_BY = ("subject", "type")
 
@@ -171,6 +172,8 @@ class ColorResolver:
             if self.color_by == "type" or not item.subject.strip():
                 return DEFAULT_STUDY_TONE
             return self.subject_tone(item.subject)
+        if isinstance(item, ClassSession):
+            return DEFAULT_CLASS_TONE if self.color_by == "type" else self.subject_tone(item.subject)
         assert isinstance(item, Deadline)
         if self.color_by == "type":
             return DEFAULT_DEADLINE_TONE

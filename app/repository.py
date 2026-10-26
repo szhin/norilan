@@ -1,4 +1,4 @@
-"""Truy cập dữ liệu: CRUD Deadline/Event/Attachment và các truy vấn cho lịch, sidebar, tìm kiếm, nhắc việc.
+"""Truy cập dữ liệu: CRUD Deadline/Event/Attachment/Môn học và các truy vấn cho lịch, sidebar, tìm kiếm, nhắc việc.
 
 Mọi hàm nhận `now` từ bên ngoài (không tự gọi datetime.now()) để dễ test.
 """
@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Any, Iterable
 
 from app.countdown import warning_due
@@ -16,6 +16,8 @@ from app.models import (
     Attachment,
     AttachmentKind,
     CalendarItem,
+    ClassSession,
+    Course,
     Event,
     Priority,
     Deadline,
@@ -30,11 +32,15 @@ log = logging.getLogger(__name__)
 _ITEM_COLS = (
     "id, kind, title, notes, starts_at, ends_at, location, status, priority, subject, "
     "remind_before_minutes, reminder_sent_at, color, completed_at, deadline_id, end_warned_at, "
-    "created_at, updated_at"
+    "due_changed_at, course_id, created_at, updated_at"
 )
-# Cùng giờ thì: deadline → study → event.
-_KIND_ORDER_SQL = "CASE kind WHEN 'deadline' THEN 0 WHEN 'study' THEN 1 ELSE 2 END"
+# Cùng giờ thì: deadline → lớp học → study → event.
+_KIND_ORDER_SQL = "CASE kind WHEN 'deadline' THEN 0 WHEN 'class' THEN 1 WHEN 'study' THEN 2 ELSE 3 END"
 _ATT_COLS = "id, item_id, kind, target, display_name, position, created_at"
+_COURSE_COLS = (
+    "id, name, weekdays, start_time, end_time, first_day, weeks, room, location, notes, "
+    "remind_before_minutes, skipped_dates, created_at, updated_at"
+)
 
 # Đổi lịch hoặc thời gian nhắc ⇒ phải nhắc lại. Trong UPDATE, cột bên phải '=' là giá trị CŨ.
 _RESET_REMINDER_SQL = (
@@ -47,6 +53,16 @@ _RESET_REMINDER_SQL = (
 _COMPLETED_SQL = (
     "completed_at = CASE WHEN :status != 'done' THEN NULL "
     "WHEN status = 'done' THEN COALESCE(completed_at, :now) ELSE :now END"
+)
+
+
+# Mốc "đổi hạn / mở lại" để tính quá hạn khi tự xoá (cột bên phải '=' là giá trị CŨ).
+_REOPENED_SQL = (
+    "due_changed_at = CASE WHEN status = 'done' AND :status != 'done' THEN :now ELSE due_changed_at END"
+)
+_DUE_CHANGED_SQL = (
+    "due_changed_at = CASE WHEN starts_at != :starts_at OR (status = 'done' AND :status != 'done') "
+    "THEN :now ELSE due_changed_at END"
 )
 
 
@@ -87,6 +103,7 @@ def _row_to_item(row: sqlite3.Row) -> CalendarItem:
             priority=Priority(row["priority"]),
             subject=row["subject"],
             completed_at=opt_from_iso(row["completed_at"]),
+            due_changed_at=opt_from_iso(row["due_changed_at"]),
             **common,
         )
     if row["kind"] == StudyTime.KIND:
@@ -98,6 +115,15 @@ def _row_to_item(row: sqlite3.Row) -> CalendarItem:
             end_warned_at=opt_from_iso(row["end_warned_at"]),
             **common,
         )
+    if row["kind"] == ClassSession.KIND:
+        return ClassSession(
+            starts_at=from_iso(row["starts_at"]),
+            ends_at=from_iso(row["ends_at"]),
+            course_id=row["course_id"],
+            subject=row["subject"],
+            location=row["location"],
+            **common,
+        )
     return Event(
         starts_at=from_iso(row["starts_at"]),
         ends_at=from_iso(row["ends_at"]),
@@ -105,6 +131,38 @@ def _row_to_item(row: sqlite3.Row) -> CalendarItem:
         color=row["color"],
         **common,
     )
+
+
+def _row_to_course(row: sqlite3.Row) -> Course:
+    return Course(
+        id=row["id"],
+        name=row["name"],
+        weekdays=tuple(int(d) for d in row["weekdays"].split(",") if d),
+        start_time=time.fromisoformat(row["start_time"]),
+        end_time=time.fromisoformat(row["end_time"]),
+        first_day=date.fromisoformat(row["first_day"]),
+        weeks=row["weeks"],
+        room=row["room"],
+        location=row["location"],
+        notes=row["notes"],
+        remind_before_minutes=row["remind_before_minutes"],
+        skipped=tuple(date.fromisoformat(d) for d in row["skipped_dates"].split(",") if d),
+        created_at=from_iso(row["created_at"]),
+        updated_at=from_iso(row["updated_at"]),
+    )
+
+
+def _course_params(course: Course) -> dict[str, Any]:
+    return {
+        "id": course.id, "name": course.name.strip(),
+        "weekdays": ",".join(str(d) for d in sorted(set(course.weekdays))),
+        "start_time": f"{course.start_time:%H:%M}", "end_time": f"{course.end_time:%H:%M}",
+        "first_day": course.first_day.isoformat(), "weeks": course.weeks,
+        "room": course.room.strip(), "location": course.location.strip(), "notes": course.notes,
+        "remind": course.remind_before_minutes,
+        "skipped": ",".join(sorted(d.isoformat() for d in set(course.skipped))),
+        "now": to_iso(_now()),
+    }
 
 
 class Repository:
@@ -125,18 +183,26 @@ class Repository:
         with self._conn:
             cur = self._conn.execute(
                 """INSERT INTO items (kind, title, notes, starts_at, status, priority, subject,
-                       remind_before_minutes, completed_at, created_at, updated_at)
-                   VALUES ('deadline', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       remind_before_minutes, completed_at, due_changed_at, created_at, updated_at)
+                   VALUES ('deadline', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     deadline.title.strip(), deadline.notes, to_iso(deadline.due_at), str(deadline.status),
                     int(deadline.priority), deadline.subject.strip(), deadline.remind_before_minutes,
-                    ts if deadline.status == DeadlineStatus.DONE else None, ts, ts,
+                    ts if deadline.status == DeadlineStatus.DONE else None, ts, ts, ts,
                 ),
             )
             deadline_id = cur.lastrowid
             self._sync_attachments(deadline_id, deadline.attachments)
         log.info("Added deadline #%s %r", deadline_id, deadline.title)
         return self._require_deadline(deadline_id)
+
+    def deadline_exists(self, title: str, due_at: datetime) -> bool:
+        """Đã có deadline cùng tên (không phân biệt hoa/thường, dấu) và cùng hạn nộp chưa – để tránh nhập trùng."""
+        wanted = fold_text(title.strip())
+        rows = self._conn.execute(
+            "SELECT title FROM items WHERE kind = 'deadline' AND starts_at = ?", (to_iso(due_at),)
+        ).fetchall()
+        return any(fold_text(r[0].strip()) == wanted for r in rows)
 
     def update_deadline(self, deadline: Deadline) -> Deadline:
         """Ghi đè mọi trường, đồng bộ danh sách đính kèm theo deadline.attachments."""
@@ -151,7 +217,7 @@ class Repository:
         }
         with self._conn:
             cur = self._conn.execute(
-                f"""UPDATE items SET {_RESET_REMINDER_SQL}, {_COMPLETED_SQL},
+                f"""UPDATE items SET {_RESET_REMINDER_SQL}, {_COMPLETED_SQL}, {_DUE_CHANGED_SQL},
                        title = :title, notes = :notes, starts_at = :starts_at, status = :status,
                        priority = :priority, subject = :subject, remind_before_minutes = :remind,
                        updated_at = :now
@@ -168,7 +234,7 @@ class Repository:
         status = DeadlineStatus(status)
         with self._conn:
             cur = self._conn.execute(
-                f"""UPDATE items SET {_COMPLETED_SQL}, status = :status, updated_at = :now
+                f"""UPDATE items SET {_COMPLETED_SQL}, {_REOPENED_SQL}, status = :status, updated_at = :now
                     WHERE id = :id AND kind = 'deadline'""",
                 {"status": str(status), "now": to_iso(at or _now()), "id": deadline_id},
             )
@@ -312,13 +378,181 @@ class Repository:
 
     def delete_deadline(self, deadline_id: int, *, study_times: str = "unlink") -> bool:
         """Xoá Deadline. `study_times`: 'unlink' (mặc định) gỡ liên kết các Study time, 'delete' xoá luôn chúng."""
+        return self.delete_deadlines([deadline_id], study_times=study_times) > 0
+
+    def delete_deadlines(self, deadline_ids: Iterable[int], *, study_times: str = "unlink") -> int:
+        """Xoá nhiều Deadline trong MỘT transaction (đường xoá duy nhất, dùng cho cả xoá thủ công lẫn tự xoá).
+
+        Đính kèm xoá theo (ON DELETE CASCADE); Study time còn liên kết thì ON DELETE SET NULL tự gỡ liên kết.
+        Trả về số Deadline đã xoá.
+        """
         if study_times not in ("unlink", "delete"):
             raise ValueError(f"study_times phải là 'unlink' hoặc 'delete', không phải {study_times!r}")
+        removed = 0
         with self._conn:
-            if study_times == "delete":
-                self._conn.execute("DELETE FROM items WHERE kind = 'study' AND deadline_id = ?", (deadline_id,))
-            cur = self._conn.execute("DELETE FROM items WHERE id = ? AND kind = 'deadline'", (deadline_id,))
-        return cur.rowcount > 0  # còn Study time thì ON DELETE SET NULL tự gỡ liên kết
+            for deadline_id in deadline_ids:
+                if study_times == "delete":
+                    self._conn.execute("DELETE FROM items WHERE kind = 'study' AND deadline_id = ?", (deadline_id,))
+                removed += self._conn.execute(
+                    "DELETE FROM items WHERE id = ? AND kind = 'deadline'", (deadline_id,)
+                ).rowcount
+        return removed
+
+    def list_deadlines(self) -> list[Deadline]:
+        rows = self._conn.execute(
+            f"SELECT {_ITEM_COLS} FROM items WHERE kind = 'deadline' ORDER BY starts_at, id"
+        ).fetchall()
+        return self._hydrate(rows)  # type: ignore[return-value]
+
+    # ------------------------------------------------------------ Môn học (thời khoá biểu)
+    def _check_course_name(self, course: Course) -> None:
+        clash = self._conn.execute(
+            "SELECT 1 FROM courses WHERE fold(name) = fold(?) AND id IS NOT ?", (course.name.strip(), course.id)
+        ).fetchone()
+        if clash:
+            raise ValidationError(tr("error.course_exists", name=course.name.strip()))
+
+    def add_course(self, course: Course) -> Course:
+        """Thêm môn và sinh mọi buổi học của nó lên lịch."""
+        course.validate()
+        self._check_course_name(course)
+        params = _course_params(course)
+        with self._conn:
+            cur = self._conn.execute(
+                """INSERT INTO courses (name, weekdays, start_time, end_time, first_day, weeks, room, location,
+                       notes, remind_before_minutes, skipped_dates, created_at, updated_at)
+                   VALUES (:name, :weekdays, :start_time, :end_time, :first_day, :weeks, :room, :location,
+                       :notes, :remind, :skipped, :now, :now)""",
+                params,
+            )
+            course_id = cur.lastrowid
+            self._sync_sessions(self._require_course(course_id))
+        log.info("Added course #%s %r", course_id, course.name)
+        return self._require_course(course_id)
+
+    def update_course(self, course: Course) -> Course:
+        """Ghi đè môn và đồng bộ lại buổi học. Đổi tên môn thì Deadline/Study time cùng môn và màu môn đi theo."""
+        if course.id is None:
+            raise ValueError("Course chưa có id")
+        course.validate()
+        self._check_course_name(course)
+        old = self._require_course(course.id)
+        params = _course_params(course)
+        with self._conn:
+            self._conn.execute(
+                """UPDATE courses SET name = :name, weekdays = :weekdays, start_time = :start_time,
+                       end_time = :end_time, first_day = :first_day, weeks = :weeks, room = :room,
+                       location = :location, notes = :notes, remind_before_minutes = :remind,
+                       skipped_dates = :skipped, updated_at = :now
+                   WHERE id = :id""",
+                params,
+            )
+            if params["name"] != old.name:
+                self._rename_subject(old.name, params["name"])
+            self._sync_sessions(self._require_course(course.id))
+        return self._require_course(course.id)
+
+    def _rename_subject(self, old: str, new: str) -> None:
+        """Đổi tên môn ở Deadline/Study time và chuyển màu môn sang tên mới (nếu tên mới chưa có màu). Gọi trong transaction."""
+        self._conn.execute(
+            "UPDATE items SET subject = ? WHERE kind IN ('deadline', 'study') AND subject = ?", (new, old)
+        )
+        self._conn.execute(
+            "UPDATE OR IGNORE subject_colors SET subject = ? WHERE subject = ?", (new, old)
+        )
+
+    def _sync_sessions(self, course: Course) -> None:
+        """Làm cho buổi học trên lịch khớp với môn. Buổi cùng giờ bắt đầu được giữ (giữ id và trạng thái
+        đã nhắc), buổi mới được thêm, buổi không còn trong lịch bị xoá. Gọi trong transaction."""
+        existing = {
+            r["starts_at"]: r["id"]
+            for r in self._conn.execute("SELECT id, starts_at FROM items WHERE course_id = ?", (course.id,))
+        }
+        kept: set[int] = set()
+        now = to_iso(_now())
+        for day in course.session_dates():
+            params = {
+                "starts_at": to_iso(datetime.combine(day, course.start_time)),
+                "ends_at": to_iso(datetime.combine(day, course.end_time)),
+                "title": course.name.strip(), "location": course.location.strip(), "notes": course.notes,
+                "remind": course.remind_before_minutes, "course_id": course.id, "now": now,
+            }
+            if (item_id := existing.get(params["starts_at"])) is not None:
+                self._conn.execute(
+                    f"""UPDATE items SET {_RESET_REMINDER_SQL}, title = :title, subject = :title,
+                           ends_at = :ends_at, location = :location, notes = :notes,
+                           remind_before_minutes = :remind, updated_at = :now
+                       WHERE id = :id""",
+                    {**params, "id": item_id},
+                )
+                kept.add(item_id)
+            else:
+                self._conn.execute(
+                    """INSERT INTO items (kind, title, subject, notes, starts_at, ends_at, location,
+                           remind_before_minutes, course_id, created_at, updated_at)
+                       VALUES ('class', :title, :title, :notes, :starts_at, :ends_at, :location,
+                           :remind, :course_id, :now, :now)""",
+                    params,
+                )
+        removed = set(existing.values()) - kept
+        if removed:
+            self._conn.executemany("DELETE FROM items WHERE id = ?", [(i,) for i in removed])
+
+    def skip_session(self, session_id: int) -> bool:
+        """Nghỉ một buổi: ghi ngày đó vào danh sách buổi nghỉ của môn và gỡ buổi khỏi lịch."""
+        session = self.get_item(session_id)
+        if not isinstance(session, ClassSession) or session.course is None:
+            return False
+        course = session.course
+        course.skipped = (*course.skipped, session.starts_at.date())
+        with self._conn:
+            self._conn.execute(
+                "UPDATE courses SET skipped_dates = :skipped, updated_at = :now WHERE id = :id",
+                _course_params(course),
+            )
+            self._conn.execute("DELETE FROM items WHERE id = ?", (session_id,))
+        return True
+
+    def delete_course(self, course_id: int) -> bool:
+        """Xoá môn và mọi buổi học của nó (ON DELETE CASCADE). Deadline/Study time cùng môn giữ nguyên."""
+        with self._conn:
+            cur = self._conn.execute("DELETE FROM courses WHERE id = ?", (course_id,))
+        return cur.rowcount > 0
+
+    def get_course(self, course_id: int) -> Course | None:
+        row = self._conn.execute(f"SELECT {_COURSE_COLS} FROM courses WHERE id = ?", (course_id,)).fetchone()
+        return _row_to_course(row) if row else None
+
+    def _require_course(self, course_id: int) -> Course:
+        course = self.get_course(course_id)
+        if course is None:
+            raise NotFoundError(f"Không tìm thấy môn học #{course_id}")
+        return course
+
+    def list_courses(self) -> list[Course]:
+        """Mọi môn, theo thứ tự trong tuần rồi giờ học (như đọc một thời khoá biểu)."""
+        rows = self._conn.execute(f"SELECT {_COURSE_COLS} FROM courses").fetchall()
+        courses = [_row_to_course(r) for r in rows]
+        return sorted(courses, key=lambda c: (min(c.weekdays), c.start_time, fold_text(c.name)))
+
+    def next_session(self, course_id: int, now: datetime) -> ClassSession | None:
+        """Buổi học tiếp theo (đang diễn ra cũng tính) của một môn."""
+        row = self._conn.execute(
+            f"SELECT {_ITEM_COLS} FROM items WHERE course_id = ? AND ends_at > ? ORDER BY starts_at LIMIT 1",
+            (course_id, to_iso(now)),
+        ).fetchone()
+        return self._hydrate([row])[0] if row else None  # type: ignore[return-value]
+
+    def items_for_subject(self, subject: str, kind: str, *, since: datetime | None = None) -> list[CalendarItem]:
+        """Deadline / Study time ghi cùng môn (liên kết với môn học theo tên). `since`: chỉ lấy mục chưa kết thúc."""
+        sql = f"SELECT {_ITEM_COLS} FROM items WHERE kind = :kind AND subject = :subject"
+        if since is not None:
+            sql += " AND COALESCE(ends_at, starts_at) >= :since"
+        rows = self._conn.execute(
+            sql + " ORDER BY starts_at, id",
+            {"kind": kind, "subject": subject.strip(), "since": to_iso(since) if since else None},
+        ).fetchall()
+        return self._hydrate(rows)
 
     # ------------------------------------------------------------ Chung
     def get_item(self, item_id: int) -> CalendarItem | None:
@@ -335,7 +569,7 @@ class Repository:
 
     def count_items(self) -> dict[str, int]:
         rows = self._conn.execute("SELECT kind, COUNT(*) AS n FROM items GROUP BY kind").fetchall()
-        counts = {"deadline": 0, "event": 0, "study": 0}
+        counts = {"deadline": 0, "event": 0, "study": 0, "class": 0}
         counts.update({r["kind"]: r["n"] for r in rows})
         return counts
 
@@ -460,8 +694,11 @@ class Repository:
         kind: str | None = None,
         limit: int = 200,
     ) -> list[CalendarItem]:
-        """Tìm theo tiêu đề/ghi chú/môn học/địa điểm, không phân biệt dấu và hoa thường."""
-        clauses: list[str] = []
+        """Tìm theo tiêu đề/ghi chú/môn học/địa điểm, không phân biệt dấu và hoa thường.
+
+        Buổi học không nằm trong kết quả (mỗi môn có hàng chục buổi giống nhau – môn đã có sẵn ở sidebar).
+        """
+        clauses: list[str] = ["kind != 'class'"]
         params: dict[str, Any] = {"limit": limit}
         if text.strip():
             params["q"] = f"%{_escape_like(fold_text(text.strip()))}%"
@@ -482,28 +719,6 @@ class Repository:
     def all_attachment_targets(self) -> set[str]:
         """Mọi đường dẫn đang được đính kèm (để dọn bản sao không còn ai dùng)."""
         return {r[0] for r in self._conn.execute("SELECT target FROM attachments")}
-
-    # ---------------------------------------------------------- Dọn dẹp
-    def done_deadlines_completed_before(self, cutoff: datetime) -> list[Deadline]:
-        rows = self._conn.execute(
-            f"""SELECT {_ITEM_COLS} FROM items
-                WHERE kind = 'deadline' AND status = 'done' AND completed_at IS NOT NULL AND completed_at < ?
-                ORDER BY completed_at""",
-            (to_iso(cutoff),),
-        ).fetchall()
-        return self._hydrate(rows)  # type: ignore[return-value]
-
-    def purge_done_deadlines(self, cutoff: datetime) -> int:
-        """Xoá vĩnh viễn deadline đã xong trước `cutoff` (đính kèm trong DB xoá theo). Trả về số đã xoá."""
-        with self._conn:
-            cur = self._conn.execute(
-                """DELETE FROM items WHERE kind = 'deadline' AND status = 'done'
-                   AND completed_at IS NOT NULL AND completed_at < ?""",
-                (to_iso(cutoff),),
-            )
-        if cur.rowcount:
-            log.info("Purged %d done deadlines completed before %s", cur.rowcount, cutoff)
-        return cur.rowcount
 
     # ---------------------------------------------------------- Màu môn học
     def subject_colors(self) -> dict[str, str]:
@@ -538,9 +753,11 @@ class Repository:
             )
 
     def subjects(self) -> list[str]:
-        """Các môn học đã dùng, môn dùng gần nhất trước (gợi ý trong ô nhập)."""
+        """Các môn học đã dùng (kể cả môn trong thời khoá biểu), môn dùng gần nhất trước (gợi ý trong ô nhập)."""
         rows = self._conn.execute(
-            """SELECT subject FROM items WHERE kind IN ('deadline', 'study') AND subject != ''
+            """SELECT subject FROM (
+                   SELECT subject, updated_at FROM items WHERE kind IN ('deadline', 'study') AND subject != ''
+                   UNION ALL SELECT name, updated_at FROM courses)
                GROUP BY subject ORDER BY MAX(updated_at) DESC, subject"""
         ).fetchall()
         return [r[0] for r in rows]
@@ -603,8 +820,17 @@ class Repository:
 
     # ------------------------------------------------------------ Nội bộ
     def _hydrate(self, rows: Iterable[sqlite3.Row]) -> list[CalendarItem]:
-        """Chuyển row → model và nạp đính kèm cho mọi deadline bằng một truy vấn (tránh N+1)."""
+        """Chuyển row → model và nạp đính kèm cho mọi deadline, môn học cho mọi buổi học (tránh N+1)."""
         items = [_row_to_item(r) for r in rows]
+        if course_ids := {i.course_id for i in items if isinstance(i, ClassSession)}:
+            marks = ",".join("?" * len(course_ids))
+            courses = {
+                r["id"]: _row_to_course(r)
+                for r in self._conn.execute(f"SELECT {_COURSE_COLS} FROM courses WHERE id IN ({marks})", list(course_ids))
+            }
+            for item in items:
+                if isinstance(item, ClassSession):
+                    item.course = courses.get(item.course_id)
         deadlines = {i.id: i for i in items if isinstance(i, Deadline)}
         if deadlines:
             ids = list(deadlines)

@@ -69,7 +69,7 @@ def test_navigation_and_views(window):
     window.go_today()
     window.set_view(ViewMode.WEEK)
     assert window.period_label.text() == "12/10 – 18/10/2026"
-    assert window.week_view.cell_for(date(2026, 10, 15)).more_text() == ""  # tuần hiện đủ 5 mục
+    assert len(window.week_view.column_for(date(2026, 10, 15)).titles()) == 5  # lưới giờ hiện đủ 5 mục
     window.set_view(ViewMode.DAY)
     window.go(1)
     assert window.selected_day == date(2026, 10, 14)

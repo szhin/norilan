@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, time, timedelta
 from enum import IntEnum, StrEnum
 from typing import ClassVar
 
@@ -103,6 +103,7 @@ class Deadline:
     reminder_sent_at: datetime | None = None
     completed_at: datetime | None = None  # do repository ghi khi chuyển sang 'Xong'
     study_count: int = 0                  # số Study time liên kết – repository nạp khi đọc, không lưu
+    due_changed_at: datetime | None = None  # lần cuối đổi hạn hoặc mở lại (mốc tính 'quá hạn' khi tự xoá)
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -192,4 +193,84 @@ class StudyTime:
         _check_remind(self.remind_before_minutes)
 
 
-CalendarItem = Deadline | Event | StudyTime
+@dataclass(slots=True)
+class Course:
+    """Môn học trong thời khoá biểu: lặp lại mỗi tuần vào các thứ đã chọn, trong `weeks` tuần.
+
+    Tuần 1 là tuần (Thứ Hai → Chủ Nhật) chứa `first_day`; buổi trước `first_day` trong tuần đó bị bỏ qua.
+    Tên môn cũng là "môn học" của Deadline / Study time – cùng tên thì được coi là liên kết với môn này.
+    """
+
+    name: str
+    weekdays: tuple[int, ...]   # 0 = Thứ Hai … 6 = Chủ Nhật
+    start_time: time
+    end_time: time
+    first_day: date
+    weeks: int = 15
+    room: str = ""
+    location: str = ""
+    notes: str = ""
+    remind_before_minutes: int | None = None
+    skipped: tuple[date, ...] = ()  # các buổi nghỉ (không hiện trên lịch)
+    id: int | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def all_dates(self) -> list[date]:
+        """Mọi ngày có buổi học theo lịch lặp, kể cả buổi nghỉ."""
+        monday = self.first_day - timedelta(days=self.first_day.weekday())
+        days = (monday + timedelta(weeks=w, days=d) for w in range(self.weeks) for d in sorted(set(self.weekdays)))
+        return [day for day in days if day >= self.first_day]
+
+    def session_dates(self) -> list[date]:
+        """Các ngày thực sự có buổi học (đã bỏ buổi nghỉ)."""
+        skipped = set(self.skipped)
+        return [day for day in self.all_dates() if day not in skipped]
+
+    @property
+    def last_day(self) -> date:
+        """Ngày của buổi cuối theo lịch lặp (kể cả khi đó là buổi nghỉ)."""
+        dates = self.all_dates()
+        return dates[-1] if dates else self.first_day
+
+    def validate(self) -> None:
+        if not self.name or not self.name.strip():
+            raise ValidationError(tr("error.course_name_empty"))
+        if not self.weekdays or any(d not in range(7) for d in self.weekdays):
+            raise ValidationError(tr("error.course_weekdays"))
+        if self.end_time <= self.start_time:
+            raise ValidationError(tr("error.end_before_start"))
+        if self.weeks < 1:
+            raise ValidationError(tr("error.course_weeks"))
+        _check_remind(self.remind_before_minutes)
+
+
+@dataclass(slots=True)
+class ClassSession:
+    """Một buổi học trên lịch, do repository sinh ra từ Course (không tạo/sửa trực tiếp).
+
+    `subject` = tên môn (để tô màu theo môn); `course` được repository nạp kèm khi đọc.
+    """
+
+    KIND: ClassVar[str] = "class"
+
+    title: str
+    starts_at: datetime
+    ends_at: datetime
+    course_id: int
+    subject: str = ""
+    location: str = ""
+    notes: str = ""
+    remind_before_minutes: int | None = None
+    course: Course | None = None
+    id: int | None = None
+    reminder_sent_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    @property
+    def room(self) -> str:
+        return self.course.room if self.course else ""
+
+
+CalendarItem = Deadline | Event | StudyTime | ClassSession

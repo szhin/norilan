@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app import APP_NAME, paths
+from app import APP_NAME, ai_import, paths
 from app.calendar_logic import (
     ViewMode,
     day_heading,
@@ -33,8 +33,8 @@ from app.calendar_logic import (
     shift,
     visible_days,
 )
-from app.colors import ColorResolver, assign_missing_tones
-from app.i18n import tr
+from app.colors import ColorResolver, assign_missing_tones, pick_tone
+from app.i18n import current_language, tr
 from app.files import (
     AttachmentMissingError,
     FileService,
@@ -43,14 +43,16 @@ from app.files import (
     prepare_attachments,
     remove_orphan_copies,
 )
-from app.models import Attachment, Deadline, DeadlineStatus, Event, StudyTime
+from app.maintenance import time_until_delete
+from app.models import Attachment, ClassSession, Course, Deadline, DeadlineStatus, Event, StudyTime
 from app.repository import Repository
 from app.settings import Settings
 from app.timeutil import day_range, now as local_now
 from app.ui import prompts
+from app.ui.ai_import_dialog import AiImportDialog
 from app.ui.background import BackgroundWidget
 from app.ui.calendar_views import DayView, MonthView, WeekView
-from app.ui.dialogs import DeadlineDialog, EventDialog, StudyTimeDialog
+from app.ui.dialogs import CourseDialog, DeadlineDialog, EventDialog, StudyTimeDialog
 from app.ui.overlay import StudyOverlay
 from app.ui.side_panel import SidePanel
 from app.ui.sidebar import Sidebar
@@ -98,6 +100,7 @@ class MainWindow(QMainWindow):
         self._colors = ColorResolver(settings.color_by, repo.subject_colors())
         self.hide_on_close = False   # bật bởi AppController khi có khay hệ thống
         self._quitting = False
+        self._editing_ids: set[int] = set()   # Deadline đang mở trong hộp thoại sửa: tự xoá bỏ qua
         self._search_text = ""
         self._search_status: DeadlineStatus | None = None
         self._search_timer = QTimer(self)
@@ -133,6 +136,9 @@ class MainWindow(QMainWindow):
         self.sidebar.new_deadline_requested.connect(lambda: self.new_deadline())
         self.sidebar.settings_requested.connect(self.settings_requested)
         self.sidebar.search_changed.connect(self._on_search_typed)
+        self.sidebar.new_course_requested.connect(lambda: self.new_course())
+        self.sidebar.course_clicked.connect(self.open_course)
+        self.sidebar.course_context.connect(self.show_course_menu)
         root.addWidget(self.sidebar)
 
         center = QWidget()
@@ -150,7 +156,7 @@ class MainWindow(QMainWindow):
             self._stack.addWidget(view)
             view.item_clicked.connect(self.on_calendar_item)
             view.item_context.connect(self.show_item_menu)
-        for grid in (self.month_view, self.week_view):
+        for grid in (self.month_view, self.week_view, self.day_view):
             grid.day_clicked.connect(self.on_day_clicked)
             grid.day_double_clicked.connect(self.new_deadline)
         cv.addWidget(self._stack, 1)
@@ -160,6 +166,12 @@ class MainWindow(QMainWindow):
         self.panel.item_context.connect(self.show_item_menu)
         self.panel.status_filter_changed.connect(self._on_status_filter)
         self.panel.page_changed.connect(self._sync_countdown_timer)
+        self.panel.page_changed.connect(lambda: self.sidebar.set_current_course(self.panel.course_id()))
+        course_view = self.panel.course_view
+        course_view.edit_requested.connect(self.edit_course)
+        course_view.delete_requested.connect(self.delete_course)
+        course_view.add_deadline_requested.connect(lambda subject: self.new_deadline(subject=subject))
+        course_view.add_study_requested.connect(lambda subject: self.new_study_time(subject=subject))
         detail = self.panel.detail
         detail.edit_requested.connect(self.edit_item)
         detail.delete_requested.connect(self.delete_item)
@@ -169,6 +181,7 @@ class MainWindow(QMainWindow):
         detail.add_study_requested.connect(self.add_study_for_deadline)
         detail.open_item_requested.connect(self.open_item)
         detail.countdown_clicked.connect(self.open_overlay)
+        detail.open_course_requested.connect(self.open_course)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setHandleWidth(1)
@@ -259,8 +272,8 @@ class MainWindow(QMainWindow):
             ("Ctrl+N", lambda: self.new_deadline()),
             ("Ctrl+Alt+N", lambda: self.new_study_time()),
             ("Ctrl+Shift+N", lambda: self.new_event()),
-            ("Ctrl+E", lambda: self._on_detail(self.edit_item)),
-            ("Delete", lambda: self._on_detail(self.delete_item)),
+            ("Ctrl+E", lambda: self._on_detail(self.edit_item, self.edit_course)),
+            ("Delete", lambda: self._on_detail(self.delete_item, self.delete_course)),
             ("Ctrl+,", self.settings_requested.emit),
             ("Ctrl+F", lambda: self.sidebar.focus_search()),
         ]
@@ -349,7 +362,8 @@ class MainWindow(QMainWindow):
                 self.refresh()
         linked = self._repo.get_deadline(item.deadline_id) if isinstance(item, StudyTime) and item.deadline_id else None
         studies = self._repo.study_times_for(item.id) if isinstance(item, Deadline) else None
-        self.panel.show_detail(item, self._clock(), self._colors, linked_deadline=linked, study_times=studies)
+        self.panel.show_detail(item, self._clock(), self._colors, linked_deadline=linked, study_times=studies,
+                               auto_delete_in=self._auto_delete_remaining(item))
         self.day_view.set_selected_item(item_id)
 
     def bring_to_front(self) -> None:
@@ -423,6 +437,7 @@ class MainWindow(QMainWindow):
         Người gọi (AppController) áp lại ảnh nền và logo sau đó – chúng gắn với widget cũ đã bị thay.
         """
         detail_id = self.panel.detail_item_id()
+        course_id = self.panel.course_id()
         self._build_ui()
         self.sidebar.search.blockSignals(True)
         self.sidebar.search.setText(self._search_text)
@@ -434,6 +449,8 @@ class MainWindow(QMainWindow):
         self.refresh()
         if detail_id is not None and self._repo.get_item(detail_id) is not None:
             self.open_item(detail_id)
+        elif course_id is not None and self._repo.get_course(course_id) is not None:
+            self.open_course(course_id)
 
     # ------------------------------------------------------------------ Đếm ngược Study time
     def _overlay_open(self) -> bool:
@@ -525,11 +542,54 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ Thêm / sửa / xoá
     @guarded
-    def new_deadline(self, day: date | None = None) -> None:
+    def new_deadline(self, day: date | None = None, *, subject: str = "") -> None:
+        """Bấm thêm Deadline: chọn nhập thủ công hoặc đọc từ ảnh."""
+        choice = prompts.choose_deadline_source(self)
+        if choice == "manual":
+            self.new_deadline_manual(day, subject=subject)
+        elif choice == "image":
+            self.new_deadlines_from_images()
+
+    @guarded
+    def new_deadlines_from_images(self) -> None:
+        if not ai_import.load_api_key() and not prompts.edit_api_key(self):
+            return
+        today = self._clock().date()
+        language = current_language()
+
+        def extract(images):  # type: ignore[no-untyped-def]  # chạy ở luồng nền: chỉ gọi mạng, không đụng DB/Qt
+            return ai_import.extract_deadlines(images, ai_import.load_api_key(), today=today, language=language)
+
+        dialog = AiImportDialog(subjects=self._repo.subjects(), today=today, extract=extract,
+                                is_duplicate=self._repo.deadline_exists, parent=self)
+        if not self._exec_dialog(dialog):
+            return
+        entries = dialog.entries()
+        if not entries:
+            return
+        colors = self._repo.subject_colors()
+        for entry in entries:
+            subject = entry.deadline.subject
+            if subject and subject not in colors:
+                colors[subject] = pick_tone(colors.values())
+                self._repo.set_subject_color(subject, colors[subject])
+        saved = []
+        for entry in entries:
+            deadline = self._repo.add_deadline(entry.deadline)
+            saved.append(deadline)
+            if entry.study is not None:   # Study time chỉ được tạo khi người dùng chủ động đặt giờ ở dòng đó
+                start, end = entry.study
+                self._repo.add_study_time(StudyTime(deadline.title, start, end, subject=deadline.subject,
+                                                    deadline_id=deadline.id))
+        log.info("Imported %d deadlines from image", len(saved))
+        self._after_save(min(saved, key=lambda d: d.due_at))
+
+    @guarded
+    def new_deadline_manual(self, day: date | None = None, *, subject: str = "") -> None:
         due = datetime.combine(day or self._selected, time(23, 59))
         dialog = DeadlineDialog(files=self._files, subjects=self._repo.subjects(), default_due=due,
                             copy_default=self._settings.copy_attachments_to_app_dir,
-                            subject_colors=self._repo.subject_colors(), parent=self)
+                            subject_colors=self._repo.subject_colors(), subject=subject, parent=self)
         if self._exec_dialog(dialog):
             deadline = dialog.result_item()
             self._copy_files(deadline, dialog.copy_files.isChecked())
@@ -550,7 +610,7 @@ class MainWindow(QMainWindow):
 
     @guarded
     def new_study_time(
-        self, day: date | None = None, *, title: str = "", deadline_id: int | None = None,
+        self, day: date | None = None, *, title: str = "", deadline_id: int | None = None, subject: str = "",
     ) -> None:
         day = day or self._clock().date()
         now = self._clock()
@@ -559,7 +619,8 @@ class MainWindow(QMainWindow):
         else:
             start = datetime.combine(day, time(9, 0))
         dialog = StudyTimeDialog(subjects=self._repo.subjects(), deadlines=self._deadline_choices(deadline_id),
-                                 default_start=start, title=title, deadline_id=deadline_id, parent=self)
+                                 default_start=start, title=title, deadline_id=deadline_id, subject=subject,
+                                 parent=self)
         if self._exec_dialog(dialog):
             self._after_save(self._repo.add_study_time(dialog.result_item()))
 
@@ -589,11 +650,19 @@ class MainWindow(QMainWindow):
         if item is None:
             self.refresh()
             return
+        if isinstance(item, ClassSession):
+            self.edit_course(item.course_id)  # buổi học sinh ra từ môn: sửa môn
+            return
         if isinstance(item, Deadline):
             dialog = DeadlineDialog(files=self._files, subjects=self._repo.subjects(), deadline=item,
                                 copy_default=self._settings.copy_attachments_to_app_dir,
                                 subject_colors=self._repo.subject_colors(), parent=self)
-            if self._exec_dialog(dialog):
+            self._editing_ids.add(item_id)
+            try:
+                accepted = self._exec_dialog(dialog)
+            finally:
+                self._editing_ids.discard(item_id)
+            if accepted:
                 deadline = dialog.result_item()
                 self._copy_files(deadline, dialog.copy_files.isChecked())
                 self._save_subject_color(dialog)
@@ -613,6 +682,13 @@ class MainWindow(QMainWindow):
     def delete_item(self, item_id: int) -> None:
         item = self._repo.get_item(item_id)
         if item is None:
+            return
+        if isinstance(item, ClassSession):
+            choice = prompts.ask_delete_class(self, item.title)
+            if choice == "skip":
+                self.skip_session(item_id)
+            elif choice == "course":
+                self._remove_course(item.course_id)
             return
         study_mode = "unlink"
         if isinstance(item, Deadline) and item.study_count:
@@ -645,6 +721,89 @@ class MainWindow(QMainWindow):
         self._repo.set_deadline_status(item_id, status)
         self._refresh_keep_detail()
 
+    # ------------------------------------------------------------------ Thời khoá biểu
+    @guarded
+    def new_course(self) -> None:
+        dialog = CourseDialog(default_first_day=self._selected, subject_colors=self._repo.subject_colors(),
+                              taken_names=[c.name for c in self._repo.list_courses()], parent=self)
+        if self._exec_dialog(dialog):
+            self._save_subject_color(dialog)
+            course = self._repo.add_course(dialog.result_item())
+            self.refresh()
+            self.open_course(course.id)  # type: ignore[arg-type]
+
+    @guarded
+    def edit_course(self, course_id: int) -> None:
+        course = self._repo.get_course(course_id)
+        if course is None:
+            self.refresh()
+            return
+        others = [c.name for c in self._repo.list_courses() if c.id != course_id]
+        dialog = CourseDialog(course=course, subject_colors=self._repo.subject_colors(), taken_names=others,
+                              parent=self)
+        if self._exec_dialog(dialog):
+            saved = self._repo.update_course(dialog.result_item())
+            self._save_subject_color(dialog)  # sau update: đổi tên môn thì màu cũ đã được chuyển sang tên mới
+            self.refresh()
+            self.open_course(saved.id)  # type: ignore[arg-type]
+
+    @guarded
+    def delete_course(self, course_id: int) -> None:
+        course = self._repo.get_course(course_id)
+        if course is None:
+            return
+        if prompts.confirm(self, tr("delete.course_title"), tr("delete.course_text", title=course.name)):
+            self._remove_course(course_id)
+
+    def _remove_course(self, course_id: int) -> None:
+        self._repo.delete_course(course_id)
+        log.info("Deleted course #%d", course_id)
+        self.refresh()
+
+    @guarded
+    def skip_session(self, item_id: int) -> None:
+        """Nghỉ một buổi học (vd. ngày lễ): buổi đó biến khỏi lịch, các buổi khác giữ nguyên."""
+        if self._repo.skip_session(item_id):
+            log.info("Skipped class session #%d", item_id)
+            self._refresh_keep_detail()
+
+    @guarded
+    def open_course(self, course_id: int) -> None:
+        """Trang môn học ở panel phải: lịch học + Deadline / Study time cùng môn."""
+        course = self._repo.get_course(course_id)
+        if course is None:
+            self.refresh()
+            return
+        now = self._clock()
+        self.panel.show_course(
+            course, now=now, next_session=self._repo.next_session(course_id, now),
+            deadlines=self._repo.items_for_subject(course.name, Deadline.KIND),
+            studies=self._repo.items_for_subject(course.name, StudyTime.KIND, since=now),
+            colors=self._colors,
+        )
+
+    @guarded
+    def show_course_menu(self, course_id: int, pos: QPoint) -> None:
+        menu = QMenu(self)
+        menu.addAction(tr("menu.details"), lambda: self.open_course(course_id))
+        menu.addAction(tr("menu.edit"), lambda: self.edit_course(course_id))
+        menu.addSeparator()
+        menu.addAction(tr("menu.delete"), lambda: self.delete_course(course_id))
+        menu.exec(pos)
+
+    def editing_deadline_ids(self) -> frozenset[int]:
+        return frozenset(self._editing_ids)
+
+    def after_auto_delete(self, count: int) -> None:
+        """Vừa tự xoá `count` deadline: báo ở thanh trạng thái và làm mới (panel đang mở deadline đã xoá thì về danh sách)."""
+        self.statusBar().showMessage(tr("autoclean.status", count=count), 10_000)
+        self._refresh_keep_detail()
+
+    def _auto_delete_remaining(self, item) -> timedelta | None:  # type: ignore[no-untyped-def]
+        if not isinstance(item, Deadline):
+            return None
+        return time_until_delete(item, self._clock(), self._settings)
+
     def _after_save(self, item: Deadline | Event | StudyTime) -> None:
         """Sau khi lưu: nhảy tới ngày của mục và mở chi tiết của nó."""
         self._selected = item.starts_at.date()
@@ -653,7 +812,7 @@ class MainWindow(QMainWindow):
         self.refresh()
         self.open_item(item.id)  # type: ignore[arg-type]
 
-    def _save_subject_color(self, dialog: DeadlineDialog) -> None:
+    def _save_subject_color(self, dialog: DeadlineDialog | CourseDialog) -> None:
         if (choice := dialog.subject_color_choice()) is not None:
             self._repo.set_subject_color(*choice)
 
@@ -672,9 +831,11 @@ class MainWindow(QMainWindow):
     def _exec_dialog(self, dialog: QDialog) -> bool:
         return dialog.exec() == QDialog.DialogCode.Accepted
 
-    def _on_detail(self, action: Callable[[int], None]) -> None:
+    def _on_detail(self, action: Callable[[int], None], course_action: Callable[[int], None]) -> None:
         if (item_id := self.panel.detail_item_id()) is not None:
             action(item_id)
+        elif (course_id := self.panel.course_id()) is not None:
+            course_action(course_id)
 
     # ------------------------------------------------------------------ Đính kèm
     @guarded
@@ -734,6 +895,14 @@ class MainWindow(QMainWindow):
             return None
         menu = QMenu(self)
         menu.addAction(tr("menu.details"), lambda: self.open_item(item_id))
+        if isinstance(item, ClassSession):
+            course_id = item.course_id
+            menu.addAction(tr("menu.open_course"), lambda: self.open_course(course_id))
+            menu.addAction(tr("menu.edit_course"), lambda: self.edit_course(course_id))
+            menu.addSeparator()
+            menu.addAction(tr("menu.skip_class"), lambda: self.skip_session(item_id))
+            menu.addAction(tr("menu.delete_course"), lambda: self.delete_course(course_id))
+            return menu
         if isinstance(item, Deadline) and len(item.file_attachments) == 1:
             att = item.file_attachments[0]
             menu.addAction(tr("menu.open_file", name=att.name), lambda: self.open_attachment(att))
@@ -762,16 +931,20 @@ class MainWindow(QMainWindow):
         subject_colors.update(new_tones)
         self._colors = ColorResolver(self._settings.color_by, subject_colors)
         self._refresh_calendar()
+        self.sidebar.set_courses(self._repo.list_courses(), self._colors, current=self.panel.course_id())
         self._refresh_sidebar()
         self._refresh_panel()
         self._refresh_overlay()
 
     def _refresh_keep_detail(self) -> None:
-        """Làm mới mọi thứ nhưng giữ trang chi tiết đang mở (nếu mục còn tồn tại)."""
+        """Làm mới mọi thứ nhưng giữ trang chi tiết / trang môn học đang mở (nếu còn tồn tại)."""
         detail_id = self.panel.detail_item_id()
+        course_id = self.panel.course_id()
         self.refresh()
         if detail_id is not None and self._repo.get_item(detail_id) is not None:
             self.open_item(detail_id)
+        elif course_id is not None and self._repo.get_course(course_id) is not None:
+            self.open_course(course_id)
 
     def _refresh_calendar(self) -> None:
         now = self._clock()
@@ -841,5 +1014,9 @@ class MainWindow(QMainWindow):
                 self.refresh()
             else:
                 self._refresh_sidebar()
+                if self._view != ViewMode.MONTH:
+                    self._views[self._view].update_now(self._clock())  # vạch 'bây giờ' trên lưới giờ
+            if (item_id := self.panel.detail_item_id()) is not None:   # dòng "Tự xoá sau …" đếm lùi theo giờ
+                self.panel.detail.set_auto_delete_note(self._auto_delete_remaining(self._repo.get_item(item_id)))
         except Exception:
             log.exception("Lỗi khi cập nhật định kỳ")

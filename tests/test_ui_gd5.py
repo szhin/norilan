@@ -28,10 +28,10 @@ ROOT = Path(__file__).resolve().parent.parent
 def make_controller(qapp, repo, launcher):
     created = []
 
-    def make(settings: Settings | None = None):
+    def make(settings: Settings | None = None, clock=lambda: NOW):
         controller = AppController(qapp, repo, settings or Settings(), settings_path=paths.settings_path(),
                                    files=FileService(launcher), notifier=RecordingNotifier(),
-                                   clock=lambda: NOW, use_tray=False)
+                                   clock=clock, use_tray=False)
         created.append(controller)
         return controller
 
@@ -157,32 +157,136 @@ def test_settings_choose_background_and_save(make_controller, tmp_path, prompts_
     assert c.window.central.has_image()
 
 
-# ------------------------------------------------------------------ Tự xoá việc đã xong
-def test_auto_delete_from_settings(make_controller, repo):
-    old = repo.add_deadline(Deadline("Xong lâu rồi", NOW - timedelta(days=40)))
-    repo.set_deadline_status(old.id, DeadlineStatus.DONE, at=NOW - timedelta(days=40))
-    recent = repo.add_deadline(Deadline("Mới xong", NOW - timedelta(days=2)))
-    repo.set_deadline_status(recent.id, DeadlineStatus.DONE, at=NOW - timedelta(days=2))
+# ------------------------------------------------------------------ Tự xoá deadline (xem test_auto_clean.py cho quy tắc)
+def old_deadline(repo, title="Cũ", days=3):
+    d = repo.add_deadline(Deadline(title, NOW - timedelta(days=days)))
+    repo._conn.execute("UPDATE items SET due_changed_at = NULL WHERE id = ?", (d.id,))   # chưa từng đổi hạn
+    repo._conn.commit()   # để transaction mở thì conn.backup() (sao lưu trước khi xoá) chờ mãi
+    return d
+
+
+def test_settings_have_two_auto_delete_toggles_on_by_default(make_controller):
     c = make_controller()
     seen = {}
 
-    def enable(dialog):
-        dialog.auto_delete.setCurrentIndex(dialog.auto_delete.findData(30))
-        seen["warning"] = dialog.purge_warning.text()
+    def inspect(dialog):
+        seen["done"] = dialog.auto_delete_done.isChecked()
+        seen["overdue"] = dialog.auto_delete_overdue.isChecked()
+        dialog.auto_delete_done.setChecked(False)
         return True
 
-    c._exec_dialog = enable
+    c._exec_dialog = inspect
+    c.open_settings()
+    assert seen == {"done": True, "overdue": True}
+    saved = load_settings(paths.settings_path())
+    assert saved.auto_delete_done is False and saved.auto_delete_overdue is True
+
+
+def test_settings_warning_shows_how_many_will_be_deleted(make_controller, repo):
+    c = make_controller(Settings(auto_delete_overdue=False))     # tắt để lúc mở app không tự xoá
+    old_deadline(repo)
+    seen = {}
+
+    def turn_on(dialog):
+        dialog.auto_delete_overdue.setChecked(True)
+        seen["warning"] = dialog.purge_warning.text()
+        return False                                              # huỷ: không áp dụng
+
+    c._exec_dialog = turn_on
     c.open_settings()
     assert "1 deadline" in seen["warning"]
-    assert repo.get_deadline(old.id) is None and repo.get_deadline(recent.id) is not None
+    assert repo.count_items()["deadline"] == 1
 
 
-def test_auto_delete_runs_on_timer(make_controller, repo):
-    c = make_controller(Settings(auto_delete_done_days=7))
-    task = repo.add_deadline(Deadline("A", NOW - timedelta(days=10)))
-    repo.set_deadline_status(task.id, DeadlineStatus.DONE, at=NOW - timedelta(days=10))
+def test_enabling_toggle_in_settings_applies_immediately(make_controller, repo):
+    c = make_controller(Settings(auto_delete_overdue=False))
+    d = old_deadline(repo)
+    c._exec_dialog = lambda dialog: dialog.auto_delete_overdue.setChecked(True) or True
+    c.open_settings()
+    assert repo.get_deadline(d.id) is None
+
+
+def test_auto_delete_runs_at_startup(make_controller, repo):
+    d = old_deadline(repo)
+    make_controller()
+    assert repo.get_deadline(d.id) is None
+    assert list((paths.data_dir() / "backups").glob("truoc-khi-tu-xoa-*.zip"))    # có sao lưu trước
+
+
+def test_auto_delete_runs_on_periodic_timer_and_status_bar_message(make_controller, repo):
+    c = make_controller()
+    assert c._clean_timer.interval() == 10 * 60 * 1000 and c._clean_timer.isActive()
+    d = old_deadline(repo, "Quá hạn")
+    c._clean_timer.timeout.emit()
+    assert repo.get_deadline(d.id) is None
+    assert c.window.statusBar().currentMessage() == "Đã tự xoá 1 deadline"
+    assert "Quá hạn" not in c.window.panel.list.titles()
+
+
+def test_auto_delete_after_resume_from_sleep(make_controller, repo):
+    clock = {"t": NOW}
+    c = make_controller(clock=lambda: clock["t"])
+    d = old_deadline(repo)
+    clock["t"] = NOW + timedelta(hours=8)                          # máy ngủ 8 tiếng rồi vòng nhắc 20s chạy lại
     c.check_reminders()
-    assert repo.get_deadline(task.id) is None
+    assert repo.get_deadline(d.id) is None
+
+
+def test_auto_delete_after_show_from_tray(make_controller, repo):
+    c = make_controller()
+    d = old_deadline(repo)
+    c.show_window()
+    assert repo.get_deadline(d.id) is None
+
+
+def test_deadline_open_in_edit_dialog_is_skipped_then_deleted_later(make_controller, repo):
+    c = make_controller()
+    d = old_deadline(repo)
+    seen = {}
+
+    def while_editing(dialog):
+        seen["ids"] = set(c.window.editing_deadline_ids())
+        c.run_maintenance()                                       # tới hạn đúng lúc đang sửa
+        seen["still_there"] = repo.get_deadline(d.id) is not None
+        return False
+
+    c.window._exec_dialog = while_editing
+    c.window.edit_item(d.id)
+    assert seen == {"ids": {d.id}, "still_there": True} and c.window.editing_deadline_ids() == frozenset()
+    c.run_maintenance()
+    assert repo.get_deadline(d.id) is None
+
+
+def test_side_panel_returns_to_list_when_open_deadline_is_auto_deleted(make_controller, repo):
+    c = make_controller()
+    d = repo.add_deadline(Deadline("Sắp bị xoá", NOW - timedelta(hours=1)))
+    c.window.open_item(d.id)
+    assert c.window.panel.detail_item_id() == d.id
+    repo._conn.execute("UPDATE items SET starts_at = ?, due_changed_at = ? WHERE id = ?",
+                       ((NOW - timedelta(days=3)).isoformat(), (NOW - timedelta(days=3)).isoformat(), d.id))
+    repo._conn.commit()
+    c.run_maintenance()
+    assert repo.get_deadline(d.id) is None and not c.window.panel.is_showing_detail()
+
+
+def test_side_panel_shows_auto_delete_line_only_in_final_window(make_controller, repo, monkeypatch):
+    monkeypatch.setattr("app.repository._now", lambda: NOW)   # due_changed_at theo cùng đồng hồ với test
+    c = make_controller()
+    soon = repo.add_deadline(Deadline("Chưa tới hạn", NOW + timedelta(days=3)))
+    late = repo.add_deadline(Deadline("Đã trễ", NOW - timedelta(hours=2)))
+    done = repo.add_deadline(Deadline("Đã xong", NOW + timedelta(days=3)))
+    repo.set_deadline_status(done.id, DeadlineStatus.DONE, at=NOW)
+    c.window.open_item(soon.id)
+    assert c.window.panel.detail.auto_delete_note is None
+    c.window.open_item(late.id)
+    assert c.window.panel.detail.auto_delete_note.text() == "Tự xoá sau 1 ngày"      # mới tạo ⇒ đủ 24 giờ
+    c.window.open_item(done.id)
+    assert c.window.panel.detail.auto_delete_note.text() == "Tự xoá sau 1 ngày"
+    c.apply_settings(Settings(auto_delete_done=False))                                # công tắc tắt → ẩn
+    c.window.open_item(done.id)
+    assert c.window.panel.detail.auto_delete_note is None
+    c.window.open_item(late.id)
+    assert c.window.panel.detail.auto_delete_note is not None                         # công tắc quá hạn vẫn bật
 
 
 # ------------------------------------------------------------------ Sao lưu / khôi phục

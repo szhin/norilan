@@ -41,17 +41,18 @@ def test_migration_v4_converts_old_database(tmp_path):
     path = tmp_path / "norilan.db"
     make_v3_db(path)
     conn = connect(path)
-    assert schema_version(conn) == SCHEMA_VERSION == 5
+    assert schema_version(conn) == SCHEMA_VERSION == 7
     repo = Repository(conn)
     lab = repo.get_deadline(1)
     assert lab is not None and (lab.title, lab.priority, lab.subject, lab.remind_before_minutes) == ("Lab 2", 2, "Toán", 30)
     assert [a.display_name for a in lab.attachments] == ["LMS"]            # đính kèm không bị xoá dây chuyền
     done = repo.get_deadline(2)
-    assert done.is_done and done.completed_at == datetime(2026, 10, 2, 8, 0)
+    # v6 đặt lại completed_at = lúc nâng cấp (để deadline cũ có đủ 24 giờ trước khi tự xoá)
+    assert done.is_done and abs(done.completed_at - datetime.now()) < timedelta(minutes=1)
     event = repo.get_event(3)
     assert (event.location, event.color) == ("Phòng 1", "green")
     assert repo.subject_colors() == {"Toán": "purple"}
-    assert repo.count_items() == {"deadline": 2, "event": 1, "study": 0}
+    assert repo.count_items() == {"deadline": 2, "event": 1, "study": 0, "class": 0}
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1          # bật lại sau migrate
     # AUTOINCREMENT giữ nguyên: id mới không trùng id cũ
@@ -118,7 +119,7 @@ def test_restore_old_backup_is_migrated_and_new_backup_has_new_schema(tmp_path):
     repo.add_event(Event("Sẽ bị thay", NOW, NOW + timedelta(hours=1)))
     restore_backup(conn, zip_path, data_dir=tmp_path / "data")
     assert schema_version(conn) == SCHEMA_VERSION
-    assert repo.count_items() == {"deadline": 2, "event": 1, "study": 0}
+    assert repo.count_items() == {"deadline": 2, "event": 1, "study": 0, "class": 0}
     assert [a.display_name for a in repo.get_deadline(1).attachments] == ["LMS"]
     repo.add_study_time(StudyTime("Học", NOW, NOW + timedelta(hours=1), deadline_id=1))
 
@@ -232,10 +233,9 @@ def test_deleting_study_time_never_affects_deadline(repo, linked):
     assert survivor is not None and survivor.study_count == 1
 
 
-def test_purging_done_deadline_unlinks_study_times(repo, linked):
+def test_bulk_delete_deadlines_unlinks_study_times(repo, linked):
     deadline, s1, *_ = linked
-    repo.set_deadline_status(deadline.id, DeadlineStatus.DONE, at=NOW - timedelta(days=60))
-    assert repo.purge_done_deadlines(NOW - timedelta(days=30)) == 1
+    assert repo.delete_deadlines([deadline.id]) == 1                   # mặc định 'unlink' (dùng cho tự xoá)
     assert repo.get_study_time(s1.id).deadline_id is None
 
 

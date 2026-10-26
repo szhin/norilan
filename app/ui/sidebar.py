@@ -1,13 +1,27 @@
-"""Sidebar trái: Lịch, Hôm nay, Ngày mai, Sắp tới, Quá hạn – kèm số đếm."""
+"""Sidebar trái: Lịch, Hôm nay, Ngày mai, Sắp tới, Quá hạn – kèm số đếm; bên dưới là thời khoá biểu."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import QButtonGroup, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtGui import QContextMenuEvent, QKeySequence, QShortcut
+from PySide6.QtWidgets import (
+    QButtonGroup,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
 
 from app import APP_NAME, __version__
+from app.calendar_logic import course_schedule_text, place_text
+from app.colors import ColorResolver
 from app.i18n import tr
-from app.ui.theme import repolish
+from app.models import Course
+from app.ui.theme import apply_tone, repolish
+from app.ui.widgets import ElidedLabel
 
 # (khoá điều hướng, biểu tượng); chữ hiển thị lấy từ bảng dịch 'nav.<khoá>'
 NAV_ITEMS: tuple[tuple[str, str], ...] = (
@@ -49,11 +63,53 @@ class NavButton(QPushButton):
         return self._badge.text() if not self._badge.isHidden() else ""
 
 
+class CourseButton(QPushButton):
+    """Một môn trong thời khoá biểu: thanh màu môn + tên + 'T2, T4 · 07:30 – 09:30'."""
+
+    context_requested = Signal(int, QPoint)
+
+    def __init__(self, course: Course, tone: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("CourseButton")
+        self.setCheckable(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.course_id: int = course.id  # type: ignore[assignment]
+        schedule = course_schedule_text(course)
+        place = place_text(course.room, course.location)
+        self.setToolTip("\n".join(p for p in (course.name, schedule, place) if p))
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 5, 8, 5)
+        layout.setSpacing(8)
+        bar = QFrame(objectName="KindBar")
+        bar.setFixedWidth(3)
+        apply_tone(bar, tone, vertical=True)
+        column = QVBoxLayout()
+        column.setSpacing(0)
+        self.name = ElidedLabel(course.name)
+        self.name.setObjectName("CourseName")
+        meta = ElidedLabel(schedule)
+        meta.setObjectName("CourseMeta")
+        column.addWidget(self.name)
+        column.addWidget(meta)
+        layout.addWidget(bar)
+        layout.addLayout(column, 1)
+        for child in (bar, self.name, meta):
+            child.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            child.setToolTip("")
+
+    def contextMenuEvent(self, event: QContextMenuEvent) -> None:
+        self.context_requested.emit(self.course_id, event.globalPos())
+        event.accept()
+
+
 class Sidebar(QFrame):
     nav_changed = Signal(str)
     new_deadline_requested = Signal()
     settings_requested = Signal()
     search_changed = Signal(str)
+    new_course_requested = Signal()
+    course_clicked = Signal(int)
+    course_context = Signal(int, QPoint)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -103,7 +159,7 @@ class Sidebar(QFrame):
             layout.addWidget(button)
             self.buttons[key] = button
 
-        layout.addStretch(1)
+        layout.addWidget(self._build_courses(), 1)
         settings = QPushButton(tr("sidebar.settings"), objectName="SidebarAction")
         settings.setCursor(Qt.CursorShape.PointingHandCursor)
         settings.setToolTip(tr("sidebar.settings_tooltip"))
@@ -111,6 +167,65 @@ class Sidebar(QFrame):
         layout.addWidget(settings)
         layout.addWidget(QLabel(f"{APP_NAME} {__version__}", objectName="SidebarFooter"))
         self.set_current("calendar")
+
+    def _build_courses(self) -> QWidget:
+        """Mục 'THỜI KHOÁ BIỂU': tiêu đề + nút ＋, danh sách môn cuộn được (chiếm phần trống còn lại)."""
+        box = QWidget()
+        layout = QVBoxLayout(box)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 4, 0)
+        header.addWidget(QLabel(tr("sidebar.courses"), objectName="SidebarSection"), 1)
+        add = QPushButton("＋", objectName="IconButton")
+        add.setCursor(Qt.CursorShape.PointingHandCursor)
+        add.setToolTip(tr("sidebar.add_course_tooltip"))
+        add.clicked.connect(self.new_course_requested)
+        header.addWidget(add, 0, Qt.AlignmentFlag.AlignBottom)
+        layout.addLayout(header)
+
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        inner = QWidget()
+        self._course_list = QVBoxLayout(inner)
+        self._course_list.setContentsMargins(0, 0, 0, 0)
+        self._course_list.setSpacing(2)
+        area.setWidget(inner)
+        layout.addWidget(area, 1)
+        self.course_buttons: list[CourseButton] = []
+        self.add_course_button: QPushButton | None = None
+        self.set_courses([])
+        return box
+
+    def set_courses(self, courses: list[Course], colors: ColorResolver | None = None,
+                    current: int | None = None) -> None:
+        """Vẽ lại danh sách môn; chưa có môn nào thì hiện nút '＋ Thêm môn học' viền đứt."""
+        colors = colors or ColorResolver()
+        while (child := self._course_list.takeAt(0)) is not None:
+            if (widget := child.widget()) is not None:
+                widget.hide()
+                widget.deleteLater()
+        self.course_buttons = []
+        self.add_course_button = None
+        if not courses:
+            self.add_course_button = QPushButton(tr("sidebar.add_course"), objectName="AddStudyButton")
+            self.add_course_button.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.add_course_button.setToolTip(tr("sidebar.add_course_tooltip"))
+            self.add_course_button.clicked.connect(self.new_course_requested)
+            self._course_list.addWidget(self.add_course_button)
+        for course in courses:
+            button = CourseButton(course, colors.subject_tone(course.name))
+            button.setChecked(course.id == current)
+            button.clicked.connect(lambda _=False, i=course.id: self.course_clicked.emit(i))
+            button.context_requested.connect(self.course_context)
+            self._course_list.addWidget(button)
+            self.course_buttons.append(button)
+        self._course_list.addStretch(1)
+
+    def set_current_course(self, course_id: int | None) -> None:
+        for button in self.course_buttons:
+            button.setChecked(button.course_id == course_id)
 
     def set_logo(self, pixmap) -> None:  # type: ignore[no-untyped-def]
         self.logo.setPixmap(pixmap)

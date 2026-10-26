@@ -1,4 +1,4 @@
-"""Dialog thêm/sửa Deadline, Study time và Event, kèm trình quản lý đính kèm (chọn file, kéo-thả, link)."""
+"""Dialog thêm/sửa Deadline, Study time, Event và môn học, kèm trình quản lý đính kèm (chọn file, kéo-thả, link)."""
 from __future__ import annotations
 
 import copy
@@ -26,14 +26,16 @@ from PySide6.QtWidgets import (
 )
 
 from app import APP_NAME
-from app.calendar_logic import REMIND_UNITS, day_month_text, split_minutes
+from app.calendar_logic import REMIND_UNITS, date_text, day_month_text, split_minutes, weekday_short
 from app.colors import DEFAULT_EVENT_TONE, ColorResolver, pick_tone
 from app import paths
+from app.db import fold_text
 from app.files import AttachmentMissingError, FileService, attachment_from_target, is_app_copy, is_missing
 from app.i18n import tr
 from app.models import (
     Attachment,
     AttachmentKind,
+    Course,
     Event,
     Priority,
     Deadline,
@@ -334,7 +336,7 @@ class DeadlineDialog(_ItemDialog):
     def __init__(
         self, *, files: FileService, subjects: list[str], deadline: Deadline | None = None,
         default_due: datetime | None = None, copy_default: bool = False,
-        subject_colors: dict[str, str] | None = None, parent: QWidget | None = None,
+        subject_colors: dict[str, str] | None = None, subject: str = "", parent: QWidget | None = None,
     ) -> None:
         super().__init__(tr("deadline.window_edit" if deadline else "deadline.window_new"), parent)
         self._original = deadline
@@ -399,6 +401,7 @@ class DeadlineDialog(_ItemDialog):
             self._load(deadline)
         else:
             self.due.set_value(default_due or datetime.combine(date.today() + timedelta(days=1), time(23, 59)))
+            self.subject.setCurrentText(subject)  # mở từ trang môn học: điền sẵn môn
         self._sync_subject_tone()
 
     def _load(self, deadline: Deadline) -> None:
@@ -549,7 +552,7 @@ class StudyTimeDialog(_ItemDialog):
     def __init__(
         self, *, subjects: list[str], deadlines: list[Deadline], study: StudyTime | None = None,
         default_start: datetime | None = None, title: str = "", deadline_id: int | None = None,
-        parent: QWidget | None = None,
+        subject: str = "", parent: QWidget | None = None,
     ) -> None:
         super().__init__(tr("study.window_edit" if study else "study.window_new"), parent)
         self._original = study
@@ -597,6 +600,7 @@ class StudyTimeDialog(_ItemDialog):
             self.start.set_value(start)
             self.end.set_value(start + self._duration)
             self.title_edit.setText(title)  # sao chép một lần từ deadline, không đồng bộ về sau
+            self.subject.setCurrentText(subject)
             self._select_deadline(deadline_id)
             self._fill_subject_from_deadline()
         self.deadline.currentIndexChanged.connect(lambda _: self._fill_subject_from_deadline())
@@ -636,3 +640,207 @@ class StudyTimeDialog(_ItemDialog):
             remind_before_minutes=original.remind_before_minutes if original else None,
             id=original.id if original else None,
         )
+
+
+# ------------------------------------------------------------------ Môn học (thời khoá biểu)
+class CourseDialog(_ItemDialog):
+    """Thêm/sửa môn học lặp lại hằng tuần: tên, thứ, giờ học, phòng, địa điểm, ngày bắt đầu, số tuần.
+
+    `taken_names`: tên các môn khác (không tính môn đang sửa) – trùng tên thì báo lỗi ngay trong dialog.
+    """
+
+    MAX_WEEKS = 52
+
+    def __init__(
+        self, *, course: Course | None = None, default_first_day: date | None = None,
+        subject_colors: dict[str, str] | None = None, taken_names: list[str] | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(tr("course.window_edit" if course else "course.window_new"), parent)
+        self._original = course
+        self._taken = {fold_text(n.strip()) for n in taken_names or []}
+        self._subject_colors = dict(subject_colors or {})
+        self._colors = ColorResolver("subject", self._subject_colors)
+        self._new_tone = pick_tone(self._subject_colors.values())
+        self._picked_tone: str | None = None
+        self._duration = timedelta(hours=2)
+        self.title_edit.setPlaceholderText(tr("course.placeholder"))
+
+        days = QHBoxLayout()
+        days.setSpacing(4)
+        self.day_buttons: list[QPushButton] = []
+        for index in range(7):
+            button = QPushButton(weekday_short(index), objectName="DayToggle")
+            button.setCheckable(True)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.toggled.connect(lambda _: self._on_changed())
+            days.addWidget(button)
+            self.day_buttons.append(button)
+        days.addStretch(1)
+        self.form.addRow(tr("course.weekdays"), days)
+
+        self.start_time = QTimeEdit()
+        self.end_time = QTimeEdit()
+        time_row = QHBoxLayout()
+        time_row.setSpacing(6)
+        for edit in (self.start_time, self.end_time):
+            edit.setDisplayFormat("HH:mm")
+            edit.setMinimumWidth(84)
+        time_row.addWidget(self.start_time)
+        time_row.addWidget(QLabel("–"))
+        time_row.addWidget(self.end_time)
+        time_row.addStretch(1)
+        self.form.addRow(tr("course.time"), time_row)
+
+        self.room = QLineEdit()
+        self.room.setPlaceholderText(tr("course.room_placeholder"))
+        self.form.addRow(tr("course.room"), self.room)
+        self.location = QLineEdit()
+        self.location.setPlaceholderText(tr("course.location_placeholder"))
+        self.form.addRow(tr("course.location"), self.location)
+
+        self.first_day = QDateEdit()
+        self.first_day.setCalendarPopup(True)
+        self.first_day.setDisplayFormat(tr("dialog.date_format"))
+        self.form.addRow(tr("course.first_day"), self.first_day)
+
+        self.weeks = QSpinBox()
+        self.weeks.setRange(1, self.MAX_WEEKS)
+        self.weeks.setSuffix(tr("course.weeks_suffix"))
+        self.weeks.setMinimumWidth(96)
+        self.until = QLabel(objectName="Muted")
+        weeks_row = QHBoxLayout()
+        weeks_row.setSpacing(10)
+        weeks_row.addWidget(self.weeks)
+        weeks_row.addWidget(self.until, 1)
+        self.form.addRow(tr("course.weeks"), weeks_row)
+
+        self.tone = ToneButton()
+        self.tone.setToolTip(tr("course.color_tooltip"))
+        self.tone.tone_changed.connect(self._on_tone_picked)
+        tone_row = QHBoxLayout()
+        tone_row.addWidget(self.tone)
+        tone_row.addStretch(1)
+        self.form.addRow(tr("course.color"), tone_row)
+
+        self.reminder = ReminderEdit()
+        self.form.addRow(tr("deadline.remind"), self.reminder)
+        self.notes = QPlainTextEdit()
+        self.notes.setPlaceholderText(tr("course.notes_placeholder"))
+        self.notes.setFixedHeight(70)
+        self.form.addRow(tr("event.notes"), self.notes)
+        hint = QLabel(tr("course.hint"), objectName="DropHint")
+        hint.setWordWrap(True)
+        self._root.addWidget(hint)
+
+        self._finish(tr("course.save_edit" if course else "course.save_new"))
+        if course is not None:
+            self.title_edit.setText(course.name)
+            for day in course.weekdays:
+                self.day_buttons[day].setChecked(True)
+            self.start_time.setTime(QTime(course.start_time.hour, course.start_time.minute))
+            self.end_time.setTime(QTime(course.end_time.hour, course.end_time.minute))
+            self._duration = datetime.combine(date.min, course.end_time) - datetime.combine(date.min, course.start_time)
+            self.room.setText(course.room)
+            self.location.setText(course.location)
+            self.first_day.setDate(QDate(course.first_day.year, course.first_day.month, course.first_day.day))
+            self.weeks.setValue(course.weeks)
+            self.reminder.set_value(course.remind_before_minutes)
+            self.notes.setPlainText(course.notes)
+        else:
+            first = default_first_day or date.today()
+            self.day_buttons[first.weekday()].setChecked(True)
+            self.start_time.setTime(QTime(7, 30))
+            self.end_time.setTime(QTime(9, 30))
+            self.first_day.setDate(QDate(first.year, first.month, first.day))
+            self.weeks.setValue(15)
+        self.resize(560, self.sizeHint().height())
+        self.title_edit.textChanged.connect(lambda _: self._sync_tone())
+        self.start_time.timeChanged.connect(self._on_start_changed)
+        self.end_time.timeChanged.connect(self._on_end_changed)
+        self.first_day.dateChanged.connect(lambda _: self._on_changed())
+        self.weeks.valueChanged.connect(lambda _: self._on_changed())
+        self._sync_tone()
+        self._on_changed()
+
+    # --- giờ học: đổi giờ bắt đầu thì giờ kết thúc dời theo, giữ nguyên thời lượng
+    def _on_start_changed(self) -> None:
+        start = datetime.combine(date.min, self.start_time.time().toPython())
+        end = start + self._duration
+        if end.date() == start.date():
+            self.end_time.blockSignals(True)
+            self.end_time.setTime(QTime(end.hour, end.minute))
+            self.end_time.blockSignals(False)
+
+    def _on_end_changed(self) -> None:
+        start, end = self.start_time.time().toPython(), self.end_time.time().toPython()
+        if end > start:
+            self._duration = datetime.combine(date.min, end) - datetime.combine(date.min, start)
+
+    def selected_days(self) -> tuple[int, ...]:
+        return tuple(i for i, button in enumerate(self.day_buttons) if button.isChecked())
+
+    def _on_changed(self) -> None:
+        """Cập nhật dòng 'buổi cuối …' và nút Lưu (cần tên + ít nhất một thứ)."""
+        days = self.selected_days()
+        if days:
+            course = self._course(days)
+            self.until.setText(tr("course.until", date=date_text(course.last_day), count=len(course.session_dates())))
+        else:
+            self.until.setText("")
+        self._sync_save()
+
+    def _sync_save(self) -> None:
+        if hasattr(self, "save_button"):
+            self.save_button.setEnabled(bool(self.title_edit.text().strip()) and bool(self.selected_days()))
+
+    # --- màu môn (dùng chung với Deadline / Study time cùng môn)
+    def _tone_for(self, name: str) -> str:
+        if self._picked_tone is not None:
+            return self._picked_tone
+        if name in self._subject_colors:
+            return self._colors.subject_tone(name)
+        if self._original is not None and self._original.name in self._subject_colors:
+            return self._colors.subject_tone(self._original.name)  # đổi tên môn: màu đi theo
+        return self._new_tone if name else "gray"
+
+    def _sync_tone(self) -> None:
+        name = self.title_edit.text().strip()
+        self.tone.setEnabled(bool(name))
+        self.tone.set_tone(self._tone_for(name))
+
+    def _on_tone_picked(self, tone: str) -> None:
+        self._picked_tone = tone
+
+    def subject_color_choice(self) -> tuple[str, str] | None:
+        """(môn, màu) cần lưu sau khi bấm Lưu: màu vừa chọn, hoặc màu cho tên môn chưa có màu."""
+        name = self.title_edit.text().strip()
+        if name and (self._picked_tone is not None or name not in self._subject_colors):
+            return name, self._tone_for(name)
+        return None
+
+    def accept(self) -> None:
+        if fold_text(self.title_edit.text().strip()) in self._taken:
+            self._show_error(tr("error.course_exists", name=self.title_edit.text().strip()))
+            return
+        super().accept()
+
+    def _course(self, days: tuple[int, ...]) -> Course:
+        original = self._original
+        return Course(
+            name=self.title_edit.text().strip(),
+            weekdays=days,
+            start_time=self.start_time.time().toPython(),
+            end_time=self.end_time.time().toPython(),
+            first_day=self.first_day.date().toPython(),
+            weeks=self.weeks.value(),
+            room=self.room.text().strip(),
+            location=self.location.text().strip(),
+            notes=self.notes.toPlainText().strip(),
+            remind_before_minutes=self.reminder.value(),
+            skipped=original.skipped if original else (),
+            id=original.id if original else None,
+        )
+
+    def result_item(self) -> Course:  # type: ignore[override]
+        return self._course(self.selected_days())

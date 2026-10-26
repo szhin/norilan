@@ -15,7 +15,6 @@ log = logging.getLogger(__name__)
 
 THEMES = ("light", "dark", "system")
 VIEWS = ("month", "week", "day")
-AUTO_DELETE_CHOICES = (0, 7, 14, 30, 90)   # 0 = tắt
 
 
 def theme_label(theme: str) -> str:
@@ -38,7 +37,8 @@ class Settings:
     background: str = ""              # tên file ảnh nền trong thư mục backgrounds của app ('' = không dùng)
     background_visibility: int = 40   # 10–90: ảnh nền hiện rõ tới mức nào (các ô lịch trong suốt theo)
     background_blur: bool = False
-    auto_delete_done_days: int = 0    # tự xoá việc đã xong sau N ngày; 0 = tắt
+    auto_delete_done: bool = True     # tự xoá deadline đã hoàn thành sau 24 giờ (maintenance.AUTO_DELETE_DELAY)
+    auto_delete_overdue: bool = True  # tự xoá deadline chưa xong khi quá hạn 24 giờ
 
     @property
     def digest_time(self) -> time:
@@ -63,8 +63,6 @@ class Settings:
             raise ValueError("Độ hiện rõ ảnh nền phải từ 10 đến 90")
         if any(sep in self.background for sep in ("/", "\\", "..")):
             raise ValueError("Tên ảnh nền không hợp lệ")
-        if not 0 <= int(self.auto_delete_done_days) <= 3650:
-            raise ValueError("Số ngày tự xoá không hợp lệ")
 
 
 def load_settings(path: Path) -> Settings:

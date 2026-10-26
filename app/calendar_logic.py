@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import calendar
-from datetime import date, datetime, timedelta
+import math
+from dataclasses import dataclass
+from datetime import date, datetime, time, timedelta
 from enum import StrEnum
 
 from app.i18n import tr, tr_seq
-from app.models import CalendarItem, Deadline, Event, Priority, StudyTime
+from app.models import CalendarItem, ClassSession, Course, Deadline, Event, Priority, StudyTime
 
 _RELATIVE = {-1: "relative.yesterday", 0: "relative.today", 1: "relative.tomorrow"}
 
@@ -121,7 +123,7 @@ def format_minutes(minutes: int | None) -> str:
 # ------------------------------------------------------------------ Mục trên lịch
 def item_last_day(item: CalendarItem) -> date:
     """Ngày cuối cùng mục còn hiển thị. Event kết thúc đúng 00:00 không chiếm ngày hôm sau."""
-    if isinstance(item, (Event, StudyTime)) and item.ends_at > item.starts_at:
+    if isinstance(item, (Event, StudyTime, ClassSession)) and item.ends_at > item.starts_at:
         return (item.ends_at - timedelta(seconds=1)).date()
     return item.starts_at.date()
 
@@ -204,7 +206,7 @@ def time_left_text(deadline: Deadline, now: datetime) -> str:
 
 
 # Biểu tượng theo loại (Deadline nổi bật hơn Event/Study time: có icon, viền, đếm Study time)
-KIND_ICONS = {Deadline.KIND: "⏳", StudyTime.KIND: "📖", Event.KIND: "📅"}
+KIND_ICONS = {Deadline.KIND: "⏳", StudyTime.KIND: "📖", ClassSession.KIND: "🏫", Event.KIND: "📅"}
 
 
 def kind_icon(item: CalendarItem) -> str:
@@ -212,11 +214,12 @@ def kind_icon(item: CalendarItem) -> str:
 
 
 def chip_label(item: CalendarItem, day: date) -> str:
-    """Chữ trên chip lịch: '⏳ 09:00 Nộp báo cáo 📖2' (Deadline), '📖 19:00 Học Anh' (Study time), 'Họp' như cũ (Event)."""
+    """Chữ trên chip lịch: '⏳ 09:00 Nộp báo cáo 📖2' (Deadline), '📖 19:00 Học Anh' (Study time),
+    '🏫 07:30 Giải tích' (buổi học), 'Họp' như cũ (Event)."""
     text = chip_text(item, day)
     if isinstance(item, Deadline):
         return f"{kind_icon(item)} {text} 📖{item.study_count}"
-    if isinstance(item, StudyTime):
+    if isinstance(item, (StudyTime, ClassSession)):
         return f"{kind_icon(item)} {text}"
     return text
 
@@ -250,9 +253,108 @@ def item_meta(item: CalendarItem, now: datetime, *, with_date: bool = False, sho
     elif isinstance(item, StudyTime):
         if item.subject and show_subject:
             parts.append(item.subject)
+    elif isinstance(item, ClassSession):
+        if place := place_text(item.room, item.location):
+            parts.append(f"📍 {place}")
     elif item.location:
         parts.append(f"📍 {item.location}")
     return " · ".join(parts)
+
+
+# ------------------------------------------------------------------ Lưới giờ (xem tuần / ngày)
+DAY_MINUTES = 1440
+MIN_BLOCK_MINUTES = 30  # mục ngắn hơn (và Deadline – chỉ là một thời điểm) vẫn đủ cao để đọc và bấm
+
+
+@dataclass(frozen=True, slots=True)
+class Placement:
+    """Vị trí một mục trong cột ngày: phút tính từ 00:00 (đã kẹp vào ngày) và cột khi trùng giờ với mục khác."""
+
+    item: CalendarItem
+    start: int
+    end: int
+    column: int
+    columns: int
+
+
+def block_span(item: CalendarItem, day: date) -> tuple[int, int]:
+    """(phút bắt đầu, phút kết thúc) của khối trên lưới giờ của `day`.
+
+    Mục qua đêm bị cắt theo ngày. Khối luôn cao ít nhất MIN_BLOCK_MINUTES: Deadline mọc xuống từ hạn nộp,
+    khối sát nửa đêm (vd. hạn 23:59) được đẩy lên để kết thúc đúng 24:00.
+    """
+    midnight = datetime.combine(day, time())
+    start = max(0, math.floor((item.starts_at - midnight).total_seconds() / 60))
+    end = start if isinstance(item, Deadline) else min(DAY_MINUTES, math.ceil((item.ends_at - midnight).total_seconds() / 60))
+    end = max(end, start + MIN_BLOCK_MINUTES)
+    if end > DAY_MINUTES:
+        start, end = DAY_MINUTES - MIN_BLOCK_MINUTES, DAY_MINUTES
+    return start, end
+
+
+def layout_day(items: list[CalendarItem], day: date) -> list[Placement]:
+    """Xếp các mục của một ngày lên lưới giờ. Các mục trùng giờ (kể cả trùng gián tiếp) tạo thành một cụm
+    và chia đều bề ngang; mỗi mục vào cột trống đầu tiên của cụm."""
+    spans = sorted(((block_span(item, day), item) for item in items), key=lambda pair: (pair[0][0], -pair[0][1]))
+    result: list[Placement] = []
+    cluster: list[tuple[CalendarItem, int, int, int]] = []
+    column_ends: list[int] = []
+    cluster_end = 0
+
+    def flush() -> None:
+        result.extend(Placement(item, s, e, col, len(column_ends)) for item, s, e, col in cluster)
+
+    for (start, end), item in spans:
+        if cluster and start >= cluster_end:
+            flush()
+            cluster, column_ends = [], []
+        column = next((i for i, last in enumerate(column_ends) if last <= start), len(column_ends))
+        if column == len(column_ends):
+            column_ends.append(end)
+        else:
+            column_ends[column] = end
+        cluster.append((item, start, end, column))
+        cluster_end = max(cluster_end, end) if len(cluster) > 1 else end
+    flush()
+    return result
+
+
+def block_text(item: CalendarItem, day: date) -> str:
+    """Chữ trong khối trên lưới giờ: dòng 1 tiêu đề, dòng 2 giờ (+ địa điểm).
+
+    Deadline chỉ một dòng tiêu đề – vị trí khối đã cho biết giờ, khối hẹp vẫn đọc được tên (giờ nằm ở tooltip).
+    """
+    if isinstance(item, Deadline):
+        return f"{kind_icon(item)} {item.title}"
+    title = item.title if isinstance(item, Event) else f"{kind_icon(item)} {item.title}"
+    details = [time_text(item)]
+    if isinstance(item, ClassSession):
+        details.append(place_text(item.room, item.location))
+    elif isinstance(item, Event):
+        details.append(item.location)
+    return f"{title}\n{' · '.join(d for d in details if d)}"
+
+
+# ------------------------------------------------------------------ Thời khoá biểu
+def place_text(room: str, location: str) -> str:
+    """'A2.301 · Cơ sở 1' (bỏ phần trống)."""
+    return " · ".join(p for p in (room.strip(), location.strip()) if p)
+
+
+def course_days_text(course: Course) -> str:
+    """'T2, T4'."""
+    return ", ".join(weekday_short(d) for d in sorted(set(course.weekdays)))
+
+
+def course_schedule_text(course: Course) -> str:
+    """'T2, T4 · 07:30 – 09:30'."""
+    return f"{course_days_text(course)} · {course.start_time:%H:%M} – {course.end_time:%H:%M}"
+
+
+def course_period_text(course: Course) -> str:
+    """'09/09/2026 – 16/12/2026 · 15 tuần'."""
+    weeks = tr("unit.week", n=course.weeks, count=course.weeks)
+    return f"{date_text(course.first_day)} – {date_text(course.last_day)} · {weeks}"
 
 
 # ------------------------------------------------------------------ Nhắc trước

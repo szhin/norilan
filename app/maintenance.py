@@ -1,42 +1,106 @@
-"""Dọn dẹp định kỳ (không Qt): tự xoá deadline đã xong sau N ngày."""
+"""Tự xoá Deadline cũ (không Qt). Chỉ Deadline – không bao giờ đụng tới Event hay Study time.
+
+Hai quy tắc (mỗi quy tắc một công tắc trong Cài đặt, đều bật mặc định), cùng độ trễ AUTO_DELETE_DELAY:
+  1. Đã xong:   now ≥ completed_at + 24h                      → xoá
+  2. Chưa xong: now ≥ max(due, due_changed_at) + 24h          → xoá
+     (due_changed_at = lần cuối đổi hạn hoặc mở lại, để deadline vừa sửa không bị xoá ngay)
+
+Quyết định chỉ dựa trên mốc thời gian so với giờ hệ thống – không có bộ đếm – nên app tắt nhiều ngày vẫn đúng.
+Xoá đi qua cùng đường xoá thủ công của repository ('unlink': Study time được giữ, chỉ mất liên kết).
+"""
 from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Collection, Iterable
 
+from app.backup import create_backup, prune_backups
 from app.files import remove_orphan_copies
+from app.models import Deadline
 from app.repository import Repository
+from app.settings import Settings
 
 log = logging.getLogger(__name__)
 
-PURGE_STATE_KEY = "last_purge_date"
+AUTO_DELETE_DELAY = timedelta(hours=24)
+BACKUP_STATE_KEY = "last_autoclean_backup_date"
+BACKUP_PREFIX = "truoc-khi-tu-xoa"
+BACKUPS_KEPT = 5
 
 
-def purge_cutoff(now: datetime, days: int) -> datetime:
-    return now - timedelta(days=days)
+def expiry_time(deadline: Deadline, settings: Settings) -> datetime | None:
+    """Thời điểm Deadline này bị tự xoá; None nếu không áp dụng (công tắc tắt hoặc chưa đủ dữ liệu)."""
+    if deadline.is_done:
+        if not settings.auto_delete_done or deadline.completed_at is None:
+            return None   # thiếu mốc hoàn thành thì không bao giờ đoán mà xoá
+        return deadline.completed_at + AUTO_DELETE_DELAY
+    if not settings.auto_delete_overdue:
+        return None
+    reference = max(deadline.due_at, deadline.due_changed_at or deadline.due_at)
+    return reference + AUTO_DELETE_DELAY
 
 
-def count_purgeable(repo: Repository, days: int, now: datetime) -> int:
-    """Số deadline sẽ bị xoá nếu đặt 'tự xoá sau `days` ngày' (để cảnh báo trước khi lưu)."""
-    if days <= 0:
-        return 0
-    return len(repo.done_deadlines_completed_before(purge_cutoff(now, days)))
+def select_expired(
+    deadlines: Iterable[Deadline], now: datetime, settings: Settings, *, skip_ids: Collection[int] = (),
+) -> list[Deadline]:
+    """Các Deadline đã đến hạn bị xoá. `skip_ids`: Deadline đang mở trong hộp thoại sửa (bỏ qua lượt này)."""
+    result = []
+    for deadline in deadlines:
+        if deadline.id in skip_ids:
+            continue
+        expires = expiry_time(deadline, settings)
+        if expires is not None and now >= expires:
+            result.append(deadline)
+    return result
 
 
-def purge_done(repo: Repository, days: int, now: datetime, *, attachments_dir: Path, force: bool = False) -> int:
-    """Xoá deadline đã xong quá `days` ngày. Mặc định mỗi ngày chạy một lần; force=True để chạy ngay.
+def time_until_delete(deadline: Deadline, now: datetime, settings: Settings) -> timedelta | None:
+    """Còn bao lâu nữa thì bị tự xoá – chỉ trả về khi cần hiện cho người dùng: Deadline đã xong, hoặc đang trong
+    24 giờ quá hạn cuối cùng. None = ẩn (công tắc tắt, hoặc chưa tới giai đoạn đó)."""
+    expires = expiry_time(deadline, settings)
+    if expires is None:
+        return None
+    remaining = expires - now
+    if not deadline.is_done and remaining > AUTO_DELETE_DELAY:
+        return None
+    return max(remaining, timedelta(0))
 
-    Bản sao đính kèm của các bài bị xoá cũng được dọn. Trả về số bài đã xoá.
-    """
-    if days <= 0:
-        return 0
+
+def count_expired(repo: Repository, now: datetime, settings: Settings) -> int:
+    """Số Deadline sẽ bị xoá ngay với cài đặt này (để cảnh báo trước khi lưu Cài đặt)."""
+    return len(select_expired(repo.list_deadlines(), now, settings))
+
+
+def _backup_once_a_day(repo: Repository, now: datetime, backups_dir: Path, data_dir: Path) -> None:
     today = now.date().isoformat()
-    if not force and repo.get_state(PURGE_STATE_KEY) == today:
+    if repo.get_state(BACKUP_STATE_KEY) == today:
+        return
+    dest = backups_dir / f"{BACKUP_PREFIX}-{now:%Y%m%d-%H%M%S}.zip"
+    create_backup(repo.connection, dest, data_dir=data_dir, now=now)
+    repo.set_state(BACKUP_STATE_KEY, today)
+    prune_backups(backups_dir, keep=BACKUPS_KEPT, pattern=f"{BACKUP_PREFIX}-*.zip")
+
+
+def auto_clean(
+    repo: Repository, settings: Settings, now: datetime, *, attachments_dir: Path, backups_dir: Path,
+    data_dir: Path, skip_ids: Collection[int] = (),
+) -> int:
+    """Xoá các Deadline đã hết hạn lưu. Trả về số đã xoá.
+
+    Có gì cần xoá thì sao lưu trước (tối đa một lần mỗi ngày; sao lưu lỗi ⇒ không xoá gì), rồi xoá trong một
+    transaction và dọn bản sao đính kèm không còn ai dùng.
+    """
+    expired = select_expired(repo.list_deadlines(), now, settings, skip_ids=skip_ids)
+    if not expired:
         return 0
-    repo.set_state(PURGE_STATE_KEY, today)
-    removed = repo.purge_done_deadlines(purge_cutoff(now, days))
+    try:
+        _backup_once_a_day(repo, now, backups_dir, data_dir)
+    except Exception:
+        log.exception("Sao lưu trước khi tự xoá thất bại – bỏ qua lượt tự xoá này")
+        return 0
+    removed = repo.delete_deadlines([d.id for d in expired], study_times="unlink")  # type: ignore[misc]
     if removed:
         remove_orphan_copies(attachments_dir, repo.all_attachment_targets())
-        log.info("Auto-delete: removed %d done deadlines older than %d days", removed, days)
+        log.info("Auto-delete: removed %d deadline(s)", removed)
     return removed

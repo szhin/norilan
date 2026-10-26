@@ -110,6 +110,78 @@ MIGRATIONS: list[str] = [
     """
     ALTER TABLE items ADD COLUMN end_warned_at TEXT;
     """,
+    # v6 – tự xoá deadline: mốc "đổi hạn / mở lại lần cuối" (completed_at đã có từ v3).
+    # Dữ liệu cũ được tính từ lúc nâng cấp để mỗi deadline có đủ 24 giờ mới, không bị xoá ngay.
+    """
+    ALTER TABLE items ADD COLUMN due_changed_at TEXT;
+    UPDATE items SET due_changed_at = strftime('%Y-%m-%dT%H:%M:%S', 'now', 'localtime')
+        WHERE kind = 'deadline' AND status != 'done';
+    UPDATE items SET completed_at = strftime('%Y-%m-%dT%H:%M:%S', 'now', 'localtime')
+        WHERE kind = 'deadline' AND status = 'done';
+    """,
+    # v7 – thời khoá biểu: bảng courses + buổi học (kind 'class') trong items, xoá dây chuyền theo môn.
+    # Lại phải dựng lại items để thêm 'class' vào CHECK của `kind` (cùng cách làm với v4).
+    """
+    CREATE TABLE courses (
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        name                  TEXT    NOT NULL,
+        weekdays              TEXT    NOT NULL,          -- '0,2' (0 = Thứ Hai)
+        start_time            TEXT    NOT NULL,          -- 'HH:MM'
+        end_time              TEXT    NOT NULL,
+        first_day             TEXT    NOT NULL,          -- 'YYYY-MM-DD'
+        weeks                 INTEGER NOT NULL CHECK (weeks >= 1),
+        room                  TEXT    NOT NULL DEFAULT '',
+        location              TEXT    NOT NULL DEFAULT '',
+        notes                 TEXT    NOT NULL DEFAULT '',
+        remind_before_minutes INTEGER CHECK (remind_before_minutes >= 0),
+        skipped_dates         TEXT    NOT NULL DEFAULT '',  -- buổi nghỉ: 'YYYY-MM-DD,YYYY-MM-DD'
+        created_at            TEXT    NOT NULL,
+        updated_at            TEXT    NOT NULL
+    );
+    CREATE TABLE items_new (
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind                  TEXT    NOT NULL CHECK (kind IN ('deadline', 'event', 'study', 'class')),
+        title                 TEXT    NOT NULL,
+        notes                 TEXT    NOT NULL DEFAULT '',
+        starts_at             TEXT    NOT NULL,          -- deadline: hạn nộp; event/study/class: giờ bắt đầu
+        ends_at               TEXT,                      -- event, study, class
+        location              TEXT    NOT NULL DEFAULT '',
+        status                TEXT    CHECK (status IN ('todo', 'in_progress', 'done')),
+        priority              INTEGER NOT NULL DEFAULT 1,
+        subject               TEXT    NOT NULL DEFAULT '',
+        remind_before_minutes INTEGER CHECK (remind_before_minutes >= 0),
+        reminder_sent_at      TEXT,
+        open_file_on_click    INTEGER NOT NULL DEFAULT 0,
+        created_at            TEXT    NOT NULL,
+        updated_at            TEXT    NOT NULL,
+        color                 TEXT,
+        completed_at          TEXT,
+        deadline_id           INTEGER REFERENCES items_new(id) ON DELETE SET NULL,  -- chỉ study
+        end_warned_at         TEXT,
+        due_changed_at        TEXT,
+        course_id             INTEGER REFERENCES courses(id) ON DELETE CASCADE,   -- chỉ class
+        CHECK ((kind = 'deadline' AND status IS NOT NULL)
+            OR (kind = 'event' AND ends_at IS NOT NULL)
+            OR (kind = 'study' AND ends_at IS NOT NULL)
+            OR (kind = 'class' AND ends_at IS NOT NULL AND course_id IS NOT NULL)),
+        CHECK (deadline_id IS NULL OR kind = 'study'),
+        CHECK (course_id IS NULL OR kind = 'class')
+    );
+    INSERT INTO items_new (id, kind, title, notes, starts_at, ends_at, location, status, priority, subject,
+                           remind_before_minutes, reminder_sent_at, open_file_on_click, created_at,
+                           updated_at, color, completed_at, deadline_id, end_warned_at, due_changed_at)
+        SELECT id, kind, title, notes, starts_at, ends_at, location, status, priority, subject,
+               remind_before_minutes, reminder_sent_at, open_file_on_click, created_at,
+               updated_at, color, completed_at, deadline_id, end_warned_at, due_changed_at
+        FROM items;
+    DROP TABLE items;
+    ALTER TABLE items_new RENAME TO items;
+    CREATE INDEX idx_items_starts_at   ON items(starts_at);
+    CREATE INDEX idx_items_kind_status ON items(kind, status);
+    CREATE INDEX idx_items_completed   ON items(kind, status, completed_at);
+    CREATE INDEX idx_items_deadline    ON items(deadline_id);
+    CREATE INDEX idx_items_course      ON items(course_id);
+    """,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

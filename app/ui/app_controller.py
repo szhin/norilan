@@ -18,7 +18,7 @@ from app.backup import BackupError, create_backup, default_backup_name, prune_ba
 from app.colors import accent_color
 from app.files import FileService
 from app.i18n import tr
-from app.maintenance import count_purgeable, purge_done
+from app.maintenance import auto_clean, count_expired
 from app.notifier import Notifier, RecordingNotifier, WinotifyNotifier, winotify_available
 from app.reminders import Notification, ReminderService
 from app.repository import Repository
@@ -39,6 +39,8 @@ log = logging.getLogger(__name__)
 REMINDER_INTERVAL_MS = 20_000   # kiểm tra nhắc việc mỗi 20 giây
 FIRST_CHECK_DELAY_MS = 3_000    # lần đầu: vài giây sau khi mở app
 SAFETY_BACKUPS_KEPT = 5
+AUTO_CLEAN_INTERVAL_MS = 10 * 60 * 1000   # tự xoá deadline cũ: kiểm tra ~10 phút một lần
+RESUME_GAP = timedelta(minutes=2)          # vòng nhắc 20s mà cách nhau lâu hơn mức này ⇒ vừa tỉnh sau khi máy ngủ
 
 
 def backup_filter() -> str:
@@ -112,6 +114,13 @@ class AppController(QObject):
         self._first_check.setInterval(FIRST_CHECK_DELAY_MS)
         self._first_check.timeout.connect(self.check_reminders)
         self._first_check.start()
+        self._last_check = clock()
+        # Tự xoá deadline cũ: lúc khởi động, rồi định kỳ ~10 phút, và khi mở lại từ khay / sau khi máy ngủ.
+        self._clean_timer = QTimer(self)
+        self._clean_timer.setInterval(AUTO_CLEAN_INTERVAL_MS)
+        self._clean_timer.timeout.connect(self._safe_maintenance)
+        self._clean_timer.start()
+        self._safe_maintenance()
 
         try:  # Windows đổi sáng/tối khi đang chạy → đổi theo nếu chọn 'Theo Windows'
             app.styleHints().colorSchemeChanged.connect(self._on_system_scheme_changed)
@@ -127,6 +136,7 @@ class AppController(QObject):
     # ------------------------------------------------------------------ Cửa sổ
     def show_window(self) -> None:
         self.window.bring_to_front()
+        self._safe_maintenance()   # mở lại từ khay: có thể đã nhiều giờ/ngày kể từ lần dọn trước
 
     def quick_add(self) -> None:
         self.window.new_deadline()
@@ -153,6 +163,7 @@ class AppController(QObject):
         """Dừng mọi bộ hẹn giờ – sau đó không còn truy cập database nữa."""
         self._timer.stop()
         self._first_check.stop()
+        self._clean_timer.stop()
         if self.tray is not None:
             self.tray.hide()
 
@@ -176,23 +187,35 @@ class AppController(QObject):
     # ------------------------------------------------------------------ Nhắc việc
     def check_reminders(self) -> list[Notification]:
         try:
-            notes = self.reminders.check(self._clock())
+            now = self._clock()
+            notes = self.reminders.check(now)
             for note in notes:
                 self.notifier.show(note)
-            self.run_maintenance()
+            if abs(now - self._last_check) > RESUME_GAP:   # máy vừa ngủ dậy (hoặc đồng hồ bị chỉnh)
+                self._safe_maintenance()
+            self._last_check = now
             self._update_tray_tooltip()
             return notes
         except Exception:
             log.exception("Lỗi khi kiểm tra nhắc việc")
             return []
 
-    def run_maintenance(self, *, force: bool = False) -> int:
-        """Tự xoá bài tập đã xong quá N ngày (mỗi ngày một lần, hoặc ngay khi vừa đổi cài đặt)."""
-        removed = purge_done(self._repo, self._settings.auto_delete_done_days, self._clock(),
-                             attachments_dir=self._data_dir / "attachments", force=force)
+    def run_maintenance(self) -> int:
+        """Tự xoá deadline hết hạn lưu (xem maintenance.py). Quyết định theo mốc thời gian so với giờ hệ thống."""
+        removed = auto_clean(
+            self._repo, self._settings, self._clock(), attachments_dir=self._data_dir / "attachments",
+            backups_dir=self._data_dir / "backups", data_dir=self._data_dir,
+            skip_ids=self.window.editing_deadline_ids(),   # deadline đang mở trong hộp thoại sửa thì để lượt sau
+        )
         if removed:
-            self.window._refresh_keep_detail()
+            self.window.after_auto_delete(removed)
         return removed
+
+    def _safe_maintenance(self) -> None:
+        try:
+            self.run_maintenance()
+        except Exception:
+            log.exception("Lỗi khi tự xoá deadline cũ")
 
     def _update_tray_tooltip(self) -> None:
         if self.tray is None:
@@ -211,7 +234,7 @@ class AppController(QObject):
         dialog = SettingsDialog(
             self._settings, subjects=self._repo.subjects(), subject_colors=self._repo.subject_colors(),
             autostart_supported=self._integration is not None, parent=self.window,
-            purge_preview=lambda days: count_purgeable(self._repo, days, self._clock()),
+            purge_preview=lambda s: count_expired(self._repo, self._clock(), s),
         )
         dialog.preview_changed.connect(self._apply_look)
         dialog.backup_requested.connect(lambda: self.backup(dialog))
@@ -237,8 +260,8 @@ class AppController(QObject):
         old = self._settings
         self._save(new)
         self.window.hide_on_close = self.tray is not None and new.minimize_to_tray
-        if new.auto_delete_done_days != old.auto_delete_done_days and new.auto_delete_done_days > 0:
-            self.run_maintenance(force=True)
+        if (new.auto_delete_done, new.auto_delete_overdue) != (old.auto_delete_done, old.auto_delete_overdue):
+            self._safe_maintenance()   # vừa bật công tắc: áp dụng ngay (xem cảnh báo trong Cài đặt)
         if self._integration is not None and new.autostart != old.autostart:
             try:
                 self._integration.set_autostart(new.autostart)

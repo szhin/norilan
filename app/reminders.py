@@ -10,9 +10,9 @@ from datetime import date, datetime, timedelta
 from typing import Callable
 
 from app import links
-from app.calendar_logic import day_month_text, format_minutes, relative_label, round_for_display
+from app.calendar_logic import day_month_text, format_minutes, place_text, relative_label, round_for_display
 from app.i18n import tr
-from app.models import CalendarItem, Deadline, Event, StudyTime
+from app.models import CalendarItem, ClassSession, Deadline, Event, StudyTime
 from app.repository import Repository
 from app.settings import Settings
 
@@ -53,6 +53,12 @@ def item_notification(item: CalendarItem, now: datetime) -> Notification:
         if item.subject:
             details.append(item.subject)
         title = f"📖 {item.title}"
+    elif isinstance(item, ClassSession):
+        details = [tr("notify.class", time=f"{item.starts_at:%H:%M}", day=when_day,
+                      remaining=_remaining(item.starts_at, now))]
+        if place := place_text(item.room, item.location):
+            details.append(f"📍 {place}")
+        title = f"🏫 {item.title}"
     else:
         assert isinstance(item, Event)
         details = [tr("notify.event", time=f"{item.starts_at:%H:%M}", day=when_day,

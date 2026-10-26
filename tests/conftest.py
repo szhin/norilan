@@ -89,6 +89,11 @@ class PromptStub:
         self.study_after_asked = 0
         self.links_action = "cancel"             # 'delete' | 'unlink' | 'cancel'
         self.links_asked: list[tuple[str, int]] = []
+        self.class_action = "cancel"             # xoá buổi học: 'skip' | 'course' | 'cancel'
+        self.class_asked: list[str] = []
+        self.deadline_source: str | None = "manual"   # trả lời cho "Nhập thủ công hay từ hình ảnh?"
+        self.api_key_asked = 0
+        self.image_files: list[str] = []
 
 
 @pytest.fixture
@@ -142,8 +147,24 @@ def prompts_stub(monkeypatch) -> PromptStub:
         stub.links_asked.append((title, count))
         return stub.links_action
 
+    def choose_source(parent):
+        return stub.deadline_source
+
+    def edit_key(parent):
+        stub.api_key_asked += 1
+        return False
+
+    monkeypatch.setattr(prompts, "choose_deadline_source", choose_source)
+    monkeypatch.setattr(prompts, "edit_api_key", edit_key)
+    monkeypatch.setattr(prompts, "pick_image_files", lambda parent: list(stub.image_files))
     monkeypatch.setattr(prompts, "ask_study_after_deadline", ask_study_after)
     monkeypatch.setattr(prompts, "ask_delete_deadline_links", ask_links)
+
+    def ask_class(parent, title):
+        stub.class_asked.append(title)
+        return stub.class_action
+
+    monkeypatch.setattr(prompts, "ask_delete_class", ask_class)
     return stub
 
 

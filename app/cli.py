@@ -10,7 +10,7 @@ from app import APP_NAME, __version__, paths
 from app.db import connect, schema_version
 from app.demo_data import seed_demo
 from app.logging_setup import setup_logging
-from app.models import Deadline, StudyTime
+from app.models import ClassSession, Deadline, StudyTime
 from app.repository import Repository
 from app.settings import load_settings
 from app.timeutil import now
@@ -29,6 +29,8 @@ def _fmt(item) -> str:  # type: ignore[no-untyped-def]
         link = f"  ↳ deadline #{item.deadline_id}" if item.deadline_id else ""
         subject = f"  [{item.subject}]" if item.subject else ""
         return f"  📖 {when}–{item.ends_at:%H:%M}  {item.title}{subject}{link}"
+    if isinstance(item, ClassSession):
+        return f"  🏫 {when}–{item.ends_at:%H:%M}  {item.title}  @ {item.room or item.location or '—'}"
     return f"  📅 {when}–{item.ends_at:%H:%M}  {item.title}  @ {item.location or '—'}"
 
 
@@ -58,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Log             : {log_file}")
     print(f"Nhắc tổng hợp   : {settings.daily_digest_time}  | theme: {settings.theme}")
     print(f"Tổng            : {counts['deadline']} deadline, {counts['study']} study time, "
-          f"{counts['event']} event\n")
+          f"{counts['event']} event, {counts['class']} buổi học\n")
 
     if args.search is not None:
         sections = [(f"Kết quả tìm '{args.search}'", repo.search(args.search))]

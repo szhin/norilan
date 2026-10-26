@@ -27,7 +27,7 @@ from app import APP_NAME
 from app.calendar_logic import ViewMode
 from app.colors import COLOR_BY, ColorResolver, color_by_label
 from app.i18n import LANGUAGE_NAMES, LANGUAGES, tr
-from app.settings import AUTO_DELETE_CHOICES, THEMES, Settings, theme_label
+from app.settings import THEMES, Settings, theme_label
 from app.ui import prompts
 from app.ui.background import BackgroundError, import_background, load_background
 from app.ui.color_picker import AccentPicker, ToneButton
@@ -65,7 +65,7 @@ class SettingsDialog(QDialog):
 
     def __init__(
         self, settings: Settings, *, subjects: list[str], subject_colors: dict[str, str],
-        autostart_supported: bool, purge_preview: Callable[[int], int] | None = None,
+        autostart_supported: bool, purge_preview: Callable[[Settings], int] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -75,7 +75,7 @@ class SettingsDialog(QDialog):
         self._background = settings.background
         self.imported_backgrounds: list[str] = []
         self.restored = False  # đặt bởi controller khi khôi phục xong
-        self._purge_preview = purge_preview or (lambda days: 0)
+        self._purge_preview = purge_preview or (lambda s: 0)
         self._preview_timer = QTimer(self)
         self._preview_timer.setSingleShot(True)
         self._preview_timer.setInterval(120)
@@ -207,25 +207,17 @@ class SettingsDialog(QDialog):
         # ---- Dọn dẹp
         root.addWidget(_divider())
         root.addWidget(_section(tr("settings.cleanup"), tr("settings.cleanup_hint")))
-        purge_row = QHBoxLayout()
-        purge_row.addWidget(QLabel(tr("settings.purge_label")))
-        self.auto_delete = QComboBox()
-        for days in AUTO_DELETE_CHOICES:
-            label = tr("settings.purge_never") if days == 0 else tr("settings.purge_days", days=days, count=days)
-            self.auto_delete.addItem(label, days)
-        index = self.auto_delete.findData(int(settings.auto_delete_done_days))
-        if index < 0:  # giá trị tuỳ chỉnh trong settings.json
-            custom = int(settings.auto_delete_done_days)
-            self.auto_delete.addItem(tr("settings.purge_days", days=custom, count=custom), custom)
-            index = self.auto_delete.count() - 1
-        self.auto_delete.setCurrentIndex(index)
-        purge_row.addWidget(self.auto_delete)
-        purge_row.addStretch(1)
-        root.addLayout(purge_row)
+        self.auto_delete_done = QCheckBox(tr("settings.purge_done"))
+        self.auto_delete_done.setChecked(settings.auto_delete_done)
+        self.auto_delete_overdue = QCheckBox(tr("settings.purge_overdue"))
+        self.auto_delete_overdue.setChecked(settings.auto_delete_overdue)
+        root.addWidget(self.auto_delete_done)
+        root.addWidget(self.auto_delete_overdue)
         self.purge_warning = QLabel(objectName="ErrorLabel")
         self.purge_warning.setWordWrap(True)
         root.addWidget(self.purge_warning)
-        self.auto_delete.currentIndexChanged.connect(lambda _: self._update_purge_warning())
+        self.auto_delete_done.toggled.connect(lambda _: self._update_purge_warning())
+        self.auto_delete_overdue.toggled.connect(lambda _: self._update_purge_warning())
         self._update_purge_warning()
 
         # ---- Dữ liệu
@@ -332,14 +324,15 @@ class SettingsDialog(QDialog):
 
     # --- tự xoá
     def _update_purge_warning(self) -> None:
-        days = int(self.auto_delete.currentData())
-        if days <= 0:
+        if not (self.auto_delete_done.isChecked() or self.auto_delete_overdue.isChecked()):
             self.purge_warning.hide()
             return
-        count = self._purge_preview(days)
+        count = self._purge_preview(replace(
+            self._original, auto_delete_done=self.auto_delete_done.isChecked(),
+            auto_delete_overdue=self.auto_delete_overdue.isChecked()))
         text = tr("settings.purge_warning")
         if count:
-            text += " " + tr("settings.purge_count", count=count, days=days)
+            text += " " + tr("settings.purge_count", count=count)
         self.purge_warning.setText(text)
         self.purge_warning.show()
 
@@ -361,7 +354,8 @@ class SettingsDialog(QDialog):
             background=self._background,
             background_visibility=self.bg_visibility.value(),
             background_blur=self.bg_blur.isChecked(),
-            auto_delete_done_days=int(self.auto_delete.currentData()),
+            auto_delete_done=self.auto_delete_done.isChecked(),
+            auto_delete_overdue=self.auto_delete_overdue.isChecked(),
         )
 
     def subject_color_changes(self) -> dict[str, str]:

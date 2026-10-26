@@ -8,7 +8,6 @@ import pytest
 
 from app.backup import BackupError, create_backup, default_backup_name, prune_backups, read_manifest, restore_backup
 from app.db import SCHEMA_VERSION, connect
-from app.maintenance import PURGE_STATE_KEY, count_purgeable, purge_done
 from app.models import Attachment, Event, Deadline, DeadlineStatus
 from app.repository import Repository
 
@@ -46,55 +45,16 @@ def test_migration_v3_backfills_completed_at(tmp_path):
                 "VALUES ('task','Xong cũ','2026-09-01T09:00:00','done','2026-08-30T08:00:00','2026-09-02T08:00:00')")
     raw.commit()
     raw.close()
+    # Bước v3 tự nó vẫn lấy lần sửa cuối làm mốc hoàn thành…
+    raw = sqlite3.connect(path)
+    raw.executescript(db.MIGRATIONS[2] + "; PRAGMA user_version = 3;")
+    assert raw.execute("SELECT completed_at FROM items").fetchone()[0] == "2026-09-02T08:00:00"
+    raw.close()
+    # …nhưng v6 (tự xoá deadline) đặt lại mốc của deadline đã xong thành lúc nâng cấp, để chúng có đủ 24 giờ mới
+    # thay vì bị xoá ngay (xem test_auto_clean.py).
+    before = datetime.now().replace(microsecond=0)
     task = Repository(connect(path)).search("Xong cũ")[0]
-    assert task.completed_at == datetime(2026, 9, 2, 8, 0)
-
-
-# ------------------------------------------------------------------ Tự xoá
-@pytest.fixture
-def done_tasks(repo):
-    ids = {}
-    for name, days_ago in (("cũ", 40), ("vừa", 10), ("mới", 1)):
-        task = repo.add_deadline(Deadline(name, NOW - timedelta(days=days_ago)))
-        repo.set_deadline_status(task.id, DeadlineStatus.DONE, at=NOW - timedelta(days=days_ago))
-        ids[name] = task.id
-    ids["chưa xong"] = repo.add_deadline(Deadline("chưa xong", NOW - timedelta(days=60))).id
-    ids["sự kiện"] = repo.add_event(Event("họp", NOW - timedelta(days=60), NOW - timedelta(days=60))).id
-    return ids
-
-
-def test_purge_only_old_done_tasks(repo, done_tasks, tmp_path):
-    assert count_purgeable(repo, 30, NOW) == 1
-    assert count_purgeable(repo, 7, NOW) == 2
-    assert count_purgeable(repo, 0, NOW) == 0
-    assert purge_done(repo, 30, NOW, attachments_dir=tmp_path) == 1
-    assert repo.get_item(done_tasks["cũ"]) is None
-    for keep in ("vừa", "mới", "chưa xong", "sự kiện"):
-        assert repo.get_item(done_tasks[keep]) is not None
-
-
-def test_purge_runs_once_per_day_unless_forced(repo, done_tasks, tmp_path):
-    assert purge_done(repo, 30, NOW, attachments_dir=tmp_path) == 1
-    assert purge_done(repo, 7, NOW + timedelta(hours=1), attachments_dir=tmp_path) == 0   # đã chạy hôm nay
-    assert purge_done(repo, 7, NOW + timedelta(hours=1), attachments_dir=tmp_path, force=True) == 1
-    assert repo.get_state(PURGE_STATE_KEY) == NOW.date().isoformat()
-
-
-def test_purge_disabled(repo, done_tasks, tmp_path):
-    assert purge_done(repo, 0, NOW, attachments_dir=tmp_path, force=True) == 0
-    assert repo.count_items()["deadline"] == 4
-
-
-def test_purge_cleans_attachment_copies_but_not_originals(repo, tmp_path):
-    copies = tmp_path / "attachments"
-    copies.mkdir()
-    copy, original = copies / "bai.docx", tmp_path / "goc.docx"
-    copy.write_text("x")
-    original.write_text("y")
-    task = repo.add_deadline(Deadline("A", NOW, attachments=[Attachment(str(copy)), Attachment(str(original))]))
-    repo.set_deadline_status(task.id, DeadlineStatus.DONE, at=NOW - timedelta(days=40))
-    purge_done(repo, 30, NOW, attachments_dir=copies)
-    assert not copy.exists() and original.exists()
+    assert before - timedelta(seconds=5) <= task.completed_at <= datetime.now() + timedelta(seconds=5)
 
 
 # ------------------------------------------------------------------ Sao lưu / khôi phục
